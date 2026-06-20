@@ -136,9 +136,13 @@ export default function Dashboard({ onOpenCase, onNewAssessment }) {
             Your saved assessments — resume one to add photos or review the read.
           </p>
         </div>
-        <ECButton small icon="search" onClick={onNewAssessment}>
-          New assessment
-        </ECButton>
+        {/* Only alongside the list — the empty state has its own "Check a block"
+            CTA, so showing this here too would be a redundant second button. */}
+        {cases && cases.length > 0 && (
+          <ECButton small icon="search" onClick={onNewAssessment}>
+            New assessment
+          </ECButton>
+        )}
       </div>
 
       {loading ? (

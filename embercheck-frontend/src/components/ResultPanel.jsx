@@ -71,11 +71,15 @@ function OverriddenTag() {
   )
 }
 
-export default function ResultPanel({ result, overrides = {} }) {
+export default function ResultPanel({ result, overrides = {}, headlineRating }) {
   if (!result) return null
 
-  const idx = balIndex(result.bal_rating)
-  const tone = balToneColor(result.bal_rating)
+  // The headline rating governs to the WORST read on the property (point,
+  // photo-sharpened point, or boundary edge) — never below any stored read. The
+  // subordinate facts below stay this (point) read's own detail.
+  const rating = headlineRating || result.bal_rating
+  const idx = balIndex(rating)
+  const tone = balToneColor(rating)
   const distance = result.nearest_vegetation_distance_m
   // The governing side's vegetation (e.g. "Woodland") so we never surface the
   // top-level "Not classified".
@@ -96,7 +100,7 @@ export default function ResultPanel({ result, overrides = {} }) {
             color: tone,
           }}
         >
-          {result.bal_rating}
+          {rating}
         </span>
         <span
           style={{
@@ -109,7 +113,7 @@ export default function ResultPanel({ result, overrides = {} }) {
         />
       </div>
       <p style={{ margin: '0 0 14px', fontSize: 15, lineHeight: 1.5, color: 'var(--ink)' }}>
-        {balDescription(result.bal_rating)}
+        {balDescription(rating)}
       </p>
 
       {/* prominent preliminary indicator, right by the headline BAL */}

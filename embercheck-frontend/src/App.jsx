@@ -1,20 +1,21 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import EntryHero from './components/EntryHero'
 import AppHeader from './components/AppHeader'
 import Dashboard from './components/Dashboard'
 import AssessmentMap from './components/AssessmentMap'
 import ResultPanel from './components/ResultPanel'
-import BoundaryResultPanel from './components/BoundaryResultPanel'
 import DrivingFactors from './components/DrivingFactors'
+import BoundaryStepCard from './components/BoundaryStepCard'
 import NextStepCard from './components/NextStepCard'
 import LoadingState from './components/LoadingState'
-import PrelimBadge from './components/ui/PrelimBadge'
 import ContourField from './components/ui/ContourField'
 import Glyph from './components/ui/Glyph'
 import Reveal from './components/ui/Reveal'
 import { ECCard, ECEyebrow } from './components/ui/ECCard'
 import { assessStream } from './lib/api'
 import { getCase, getCasePhotoURL, createCase } from './lib/cases'
+import { caseHasBoundary, boundaryPolygonFromCase } from './lib/boundary'
+import { worstBalRating } from './lib/ec'
 import { getRefreshToken } from './lib/auth'
 import { useAuth } from './auth/AuthContext'
 import { plog } from './lib/debug'
@@ -38,9 +39,10 @@ function setHash(h) {
 }
 
 function App() {
-  // Saving a boundary assessment is login-gated (it becomes a durable Case), so
-  // we use the SAME auth gate the deep-analysis photo flow uses.
-  const { ensureAuthenticated } = useAuth()
+  // The signed-in user (or null). When present, an address check is auto-saved
+  // as a DRAFT case so it lands in My Properties and the boundary/photo flows
+  // update that same case. Logged out stays public/stateless.
+  const { user } = useAuth()
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
@@ -49,11 +51,14 @@ function App() {
   // The address of the current result, so override changes can re-run it.
   const [lastAddress, setLastAddress] = useState('')
   const [overrides, setOverrides] = useState(NO_OVERRIDES)
-  // The site boundary the user has drawn on the map (GeoJSON Polygon), or null
-  // for the normal point assessment. Set/cleared by the map's draw tool.
-  const [sitePolygon, setSitePolygon] = useState(null)
-  // The side (N/E/S/W) the user is hovering in the boundary panel, so the map
-  // can highlight that side's transect chips in real time.
+  // Saved boundary assessment (separate from the free point result), set when the
+  // user completes the boundary workflow or resumes a boundary case.
+  const [boundarySession, setBoundarySession] = useState(null)
+  // The bal_rating of the latest in-session photo-sharpened read, so the headline
+  // can govern to the worst across point, photo, and boundary (safety). On resume
+  // the sharpened read is already in `result`, so this only covers the live flow.
+  const [sharpenedRating, setSharpenedRating] = useState(null)
+  // The side (N/E/S/W) hovered in the boundary summary, for map highlighting.
   const [highlightedSide, setHighlightedSide] = useState(null)
   // Identifies the latest assessment run; lets us ignore an in-flight stream's
   // late results if the user has gone back (or started another run) meanwhile.
@@ -79,14 +84,32 @@ function App() {
   const [resumedPhotoUrls, setResumedPhotoUrls] = useState({})
   const photoUrlsRef = useRef({})
 
-  // The draw tool emits the current ring (or null on clear); remember it so the
-  // "Assess this boundary" button can re-run the assessment from the edge.
-  const handleSitePolygon = useCallback((polygon) => {
-    setSitePolygon(polygon)
-  }, [])
+  function handleBoundarySaved({ boundaryResult, polygon, caseId, caseRecord }) {
+    setBoundarySession({ boundaryResult, polygon, caseId })
+    if (caseRecord) setActiveCase(caseRecord)
+    setHash(`#/cases/${caseId}`)
+  }
 
-  // Core call used by a fresh search, an override change, or a boundary assess.
-  // polygon: a GeoJSON Polygon to assess from the edge, or null for point mode.
+  // Logged-in only: persist a just-checked address as a DRAFT case in the
+  // background, so it appears in My Properties and the boundary/photo flows
+  // update the SAME case (activeCase). Not awaited — the result is already on
+  // screen, so saving never blocks it; a save failure leaves the read untouched.
+  async function persistDraft(address, activeOverrides, myRun) {
+    try {
+      const created = await createCase({
+        address,
+        fireDangerOverride: activeOverrides?.fireDanger,
+        slopeOverride: activeOverrides?.slope,
+      })
+      if (runId.current !== myRun) return // user moved on — don't attach a stale case
+      setActiveCase(created)
+      setHash(`#/cases/${created.id}`)
+    } catch {
+      /* couldn't save the draft (offline, etc.) — the on-screen read is unaffected */
+    }
+  }
+
+  // Core call used by a fresh search or an override change (point mode only).
   async function runAssess(address, activeOverrides, polygon = null) {
     const myRun = ++runId.current
     setLoading(true)
@@ -108,6 +131,8 @@ function App() {
       )
       if (runId.current !== myRun) return
       setResult(data)
+      // Auto-save the check as a draft when signed in (background, point mode).
+      if (user && !polygon) persistDraft(address, activeOverrides, myRun)
     } catch (err) {
       if (runId.current !== myRun) return
       setError(err.message)
@@ -117,48 +142,14 @@ function App() {
     }
   }
 
-  // Fresh search from the entry screen: start clean (no overrides, no boundary).
+  // Fresh search from the entry screen: start clean (no overrides, no boundary,
+  // no carried-over case — a new check is its own draft when signed in).
   function handleAssess(address) {
     setOverrides(NO_OVERRIDES)
-    setSitePolygon(null)
+    setBoundarySession(null)
+    setSharpenedRating(null)
+    setActiveCase(null)
     runAssess(address, NO_OVERRIDES, null)
-  }
-
-  // Assess from the drawn boundary edge AND save it as a durable Case. Unlike the
-  // public point assessment, this is login-gated (like the photo flow): we demand
-  // auth, then POST /cases (which re-runs the SAME pipeline in boundary mode and
-  // stores the full result). On success the saved case becomes the result, so it
-  // shows in My Properties and survives "back". The drawn polygon is left on the
-  // map. No /assess/stream here — the single /cases call is the only run.
-  async function handleAssessBoundary() {
-    if (!sitePolygon || !lastAddress) return
-
-    const ok = await ensureAuthenticated()
-    if (!ok) return // user cancelled the login modal — stay on the point result.
-
-    const myRun = ++runId.current
-    setLoading(true)
-    setError(null)
-    setStages({})
-    try {
-      const created = await createCase({
-        address: lastAddress,
-        boundaryPolygon: sitePolygon,
-        fireDangerOverride: overrides?.fireDanger,
-        slopeOverride: overrides?.slope,
-      })
-      if (runId.current !== myRun) return
-      // Render the saved case's stored boundary assessment; keep sitePolygon so
-      // the drawn boundary stays on the map. The hash makes the case linkable.
-      setResult(created.assessment)
-      setActiveCase(created)
-      setHash(`#/cases/${created.id}`)
-    } catch (err) {
-      if (runId.current !== myRun) return
-      setError(err.message)
-    } finally {
-      if (runId.current === myRun) setLoading(false)
-    }
   }
 
   // Clear all result/session state and invalidate any in-flight run so its late
@@ -184,7 +175,8 @@ function App() {
     setStages({})
     setLastAddress('')
     setOverrides(NO_OVERRIDES)
-    setSitePolygon(null)
+    setBoundarySession(null)
+    setSharpenedRating(null)
     setHighlightedSide(null)
     setActiveCase(null)
     revokePhotoUrls()
@@ -259,12 +251,31 @@ function App() {
       }
       plog('photo urls ready', Object.keys(urls))
 
-      // Commit photos + result together so the panel mounts with the URLs.
+      const address =
+        loaded.property?.address ||
+        loaded.assessment?.address ||
+        loaded.boundary_assessment?.address ||
+        ''
+      setLastAddress(address)
+
+      // The persisted reads are authoritative — no re-fetch. The default/point
+      // read drives the main page; a boundary-only case falls back to its
+      // boundary read so the page still renders a headline.
+      setResult(loaded.assessment || loaded.boundary_assessment)
+
+      // A saved boundary read renders in BoundaryStepCard below the default read,
+      // coexisting with point + photo (they live in separate case fields now).
+      if (caseHasBoundary(loaded)) {
+        setBoundarySession({
+          boundaryResult: loaded.boundary_assessment,
+          polygon: boundaryPolygonFromCase(loaded),
+          caseId: loaded.id,
+        })
+      }
+
       photoUrlsRef.current = urls
       setResumedPhotoUrls(urls)
-      setResult(loaded.assessment)
       setActiveCase(loaded)
-      setLastAddress(loaded.property?.address || loaded.assessment?.address || '')
     } catch (err) {
       if (runId.current !== myRun) return
       setError(err.message)
@@ -291,14 +302,9 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Boundary mode = the result was assessed from a drawn polygon (its transects
-  // carry an outward direction). Drives the per-transect table + button label.
-  const isBoundaryResult = Boolean(
-    result?.per_direction?.some((side) => side.outward_direction),
-  )
-
   // When resuming a saved case, seed NextStepCard so it continues on that case.
-  // A completed/submitted case carries its sharpened assessment + photos.
+  // A completed/submitted case carries its sharpened assessment + photos in
+  // `assessment` (the boundary read lives separately in boundary_assessment).
   const resumedComplete =
     activeCase?.status === 'ANALYSIS_COMPLETE' ||
     activeCase?.status === 'SUBMITTED_TO_ASSESSOR'
@@ -315,6 +321,15 @@ function App() {
       resumedPhotos.map((p) => ({ dir: p.intended_direction, hasImage: Boolean(p.image) })),
     )
   }
+
+  // SAFETY: the single property headline governs to the WORST read present —
+  // point (or photo-sharpened point in `result`), the live sharpened read, and
+  // the boundary edge read — so it never sits below any individual panel.
+  const headlineRating = worstBalRating([
+    result?.bal_rating,
+    sharpenedRating,
+    boundarySession?.boundaryResult?.bal_rating,
+  ])
 
   // Entry screen until a run starts; the analyzing view while loading; the full
   // results only once the backend has finished and a result is in hand.
@@ -415,82 +430,52 @@ function App() {
                     <div className="ec-map-frame">
                       <AssessmentMap
                         geometry={result?.geometry}
-                        onPolygon={handleSitePolygon}
-                        transects={result?.per_direction}
-                        governingDirection={result?.governing_direction}
+                        siteBoundaryOverlay={boundarySession?.polygon}
+                        transects={boundarySession?.boundaryResult?.per_direction}
+                        governingDirection={boundarySession?.boundaryResult?.governing_direction}
                         highlightedSide={highlightedSide}
                       />
                     </div>
-
-                    {/* Appears once a boundary is drawn: re-runs the assessment
-                        measuring from the edge instead of the geocoded point. */}
-                    {sitePolygon && (
-                      <div style={{ marginTop: 12, display: 'flex', justifyContent: 'center' }}>
-                        <button
-                          type="button"
-                          className="ec-press"
-                          onClick={handleAssessBoundary}
-                          style={{
-                            border: 'none',
-                            borderRadius: 99,
-                            padding: '10px 18px',
-                            background: 'var(--ember, #7A1F1F)',
-                            color: '#fff',
-                            fontWeight: 700,
-                            fontSize: 14,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          Assess this boundary
-                        </button>
-                      </div>
-                    )}
                   </ECCard>
                 </div>
 
-                {/* story column — scrolls within its own panel on desktop.
-                    Boundary mode swaps the right-side content for the per-side
-                    breakdown; the address (point) flow is unchanged. */}
+                {/* story column — default result always visible; boundary and photo
+                    summaries stack below without replacing each other. */}
                 <div className="ec-story-col">
-                  {isBoundaryResult ? (
-                    <Reveal>
-                      <BoundaryResultPanel
-                        result={result}
-                        onHoverSide={setHighlightedSide}
-                        onBack={handleBack}
-                      />
-                    </Reveal>
-                  ) : (
-                    <>
-                      <Reveal>
-                        <ResultPanel result={result} overrides={overrides} />
-                      </Reveal>
-                      <Reveal delay={80}>
-                        <DrivingFactors result={result} />
-                      </Reveal>
-                      <Reveal delay={120}>
-                        {/* key on the case (when resuming) or the property so
-                            the deep-analysis session resets cleanly and never
-                            reuses a stale case_id across properties. */}
-                        <NextStepCard
-                          key={activeCase?.id || result.matched_address || result.address}
-                          result={result}
-                          overrides={overrides}
-                          initialCaseId={activeCase?.id || null}
-                          caseStatus={activeCase?.status || null}
-                          initialSharpened={resumedSharpened}
-                          initialPhotos={resumedPhotos}
-                        />
-                      </Reveal>
-                    </>
-                  )}
-                  {/* Boundary mode keeps its badge here; point mode shows the
-                      prominent one beside the BAL inside ResultPanel. */}
-                  {isBoundaryResult && (
-                    <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 4, paddingBottom: 8 }}>
-                      <PrelimBadge />
-                    </div>
-                  )}
+                  <Reveal>
+                    <ResultPanel
+                      result={result}
+                      overrides={overrides}
+                      headlineRating={headlineRating}
+                    />
+                  </Reveal>
+                  <Reveal delay={80}>
+                    <DrivingFactors result={result} />
+                  </Reveal>
+                  <Reveal delay={100}>
+                    <BoundaryStepCard
+                      key={`boundary-${boundarySession?.caseId || activeCase?.id || result.matched_address || result.address}`}
+                      result={result}
+                      overrides={overrides}
+                      initialBoundaryResult={boundarySession?.boundaryResult || null}
+                      initialPolygon={boundarySession?.polygon || null}
+                      initialCaseId={boundarySession?.caseId || activeCase?.id || null}
+                      onBoundarySaved={handleBoundarySaved}
+                      onHoverSide={setHighlightedSide}
+                    />
+                  </Reveal>
+                  <Reveal delay={120}>
+                    <NextStepCard
+                      key={activeCase?.id || result.matched_address || result.address}
+                      result={result}
+                      overrides={overrides}
+                      initialCaseId={activeCase?.id || boundarySession?.caseId || null}
+                      caseStatus={activeCase?.status || null}
+                      initialSharpened={resumedSharpened}
+                      initialPhotos={resumedPhotos}
+                      onSharpened={(data) => setSharpenedRating(data?.bal_rating)}
+                    />
+                  </Reveal>
                 </div>
               </div>
             </section>

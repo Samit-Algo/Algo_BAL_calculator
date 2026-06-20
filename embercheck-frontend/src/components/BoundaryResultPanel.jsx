@@ -2,7 +2,6 @@ import { balDescription } from '../lib/bal'
 import { balToneColor } from '../lib/ec'
 import { buildSideSummaries } from '../lib/report'
 import { ECCard, ECEyebrow } from './ui/ECCard'
-import ECButton from './ui/ECButton'
 import Glyph from './ui/Glyph'
 
 // A BAL chip tinted by the rating's tone colour (matches the map chips).
@@ -109,23 +108,22 @@ function SideCard({ summary, onHover }) {
   )
 }
 
-// The boundary-mode result: per-side cards (worst transect each), the overall
-// BAL, and a way back to the address (point) prediction. Hovering a card asks
-// the map to highlight that side via onHoverSide.
-export default function BoundaryResultPanel({ result, onHoverSide, onBack }) {
+// Per-side boundary result cards + overall BAL. `variant="summary"` sits on the
+// main result page below the default assessment; `full` is used inside the
+// boundary workflow page before the user taps Done.
+export default function BoundaryResultPanel({
+  result,
+  onHoverSide,
+  variant = 'summary',
+}) {
   if (!result) return null
   const summaries = buildSideSummaries(result)
   const tone = balToneColor(result.bal_rating)
+  const eyebrow = variant === 'summary' ? '✓' : null
 
   return (
     <ECCard>
-      <div style={{ marginBottom: 12 }}>
-        <ECButton variant="ghost" icon="chevronLeft" onClick={onBack}>
-          Back to My Properties
-        </ECButton>
-      </div>
-
-      <ECEyebrow>Assessed from your boundary</ECEyebrow>
+      <ECEyebrow n={eyebrow}>Assessed from your boundary</ECEyebrow>
       <p style={{ margin: '0 0 16px', fontSize: 14, lineHeight: 1.5, color: 'var(--ink-soft)' }}>
         Each side of your block, measured from the boundary edge. The worst side governs the
         overall rating.

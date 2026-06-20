@@ -24,7 +24,7 @@ from app.db.mongodb import init_db, close_db, get_client
 from app.auth.backend import current_active_user
 from app.auth.routes import router as auth_router
 from app.cases.routes import router as cases_router
-from app.cases.service import build_case_photos, get_owned_case_or_404
+from app.cases.service import build_case_photos, get_owned_case_or_404, worst_read
 
 logger = logging.getLogger("embercheck")
 
@@ -168,10 +168,13 @@ async def assess_with_photos(
         photos=photos,
     )
 
-    # 3 - persist the sharpened result into the case.
+    # 3 - persist the sharpened result into the case. Photos sharpen the POINT
+    # read only; any saved boundary read is left untouched. The denormalised
+    # headline stays the WORST of both reads (safety: never below a stored read).
     case.assessment = assessment
-    case.bal_rating = assessment.get("bal_rating")
-    case.governing_direction = assessment.get("governing_direction")
+    worst = worst_read(assessment, case.boundary_assessment)
+    case.bal_rating = worst.get("bal_rating") if worst else None
+    case.governing_direction = worst.get("governing_direction") if worst else None
     case.photos = build_case_photos(photos, assessment)
     case.status = CaseStatus.ANALYSIS_COMPLETE
     case.updated_at = datetime.now(timezone.utc)

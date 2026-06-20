@@ -19,11 +19,30 @@ class CaseCreateRequest(BaseModel):
     address: str
 
     # Optional GeoJSON site boundary (Polygon or Feature), mirroring
-    # AssessmentRequest.site_polygon. When given, distances are measured from the
-    # boundary edge exactly as the public boundary mode does.
+    # AssessmentRequest.site_polygon. When given, the case is created with a
+    # BOUNDARY read only (stored in boundary_assessment) and no separate point
+    # run, to avoid double-running the pipeline on a boundary save.
     boundary_polygon: dict | None = None
 
+    # Only meaningful alongside boundary_polygon: also run point mode and store it
+    # in `assessment`. Default False — a boundary save skips the extra point run
+    # (the live screen already has the public point read).
+    include_point: bool = False
+
     # Same optional overrides /assess accepts.
+    fire_danger_override: int | None = None
+    slope_override: float | None = None
+
+
+class BoundaryUpdateRequest(BaseModel):
+    """Run/replace the BOUNDARY read on an existing case in place. Used by
+    PUT /cases/{id}/boundary so an edited polygon updates the same case instead
+    of inserting a duplicate. The point/photo read (`assessment`) is untouched."""
+
+    # GeoJSON site boundary (Polygon or Feature). Required - this endpoint exists
+    # to (re)assess from the edge.
+    boundary_polygon: dict
+
     fire_danger_override: int | None = None
     slope_override: float | None = None
 
@@ -35,6 +54,9 @@ class CaseRead(BaseModel):
     status: CaseStatus
     property: PropertyInfo
     assessment: dict | None = None
+    # The boundary (site-edge) read, returned alongside the point/photo read so
+    # the client can render both on one property page. None for a point-only case.
+    boundary_assessment: dict | None = None
     bal_rating: str | None = None
     governing_direction: str | None = None
     # Derived on read from the governing side's per_direction entry (e.g.
@@ -52,6 +74,7 @@ class CaseRead(BaseModel):
             status=case.status,
             property=case.property,
             assessment=case.assessment,
+            boundary_assessment=case.boundary_assessment,
             bal_rating=case.bal_rating,
             governing_direction=case.governing_direction,
             governing_vegetation=governing_vegetation(case),
@@ -70,6 +93,9 @@ class CaseSummary(BaseModel):
     bal_rating: str | None = None
     governing_direction: str | None = None
     governing_vegetation: str | None = None
+    # Whether this case carries a saved boundary read, so the dashboard card can
+    # badge it without shipping the full assessment dict.
+    has_boundary: bool = False
     status: CaseStatus
     created_at: datetime
     updated_at: datetime
@@ -84,6 +110,7 @@ class CaseSummary(BaseModel):
             bal_rating=case.bal_rating,
             governing_direction=case.governing_direction,
             governing_vegetation=governing_vegetation(case),
+            has_boundary=bool(case.boundary_assessment),
             status=case.status,
             created_at=case.created_at,
             updated_at=case.updated_at,

@@ -22,3 +22,20 @@ export function balToneColor(rating) {
   const i = balIndex(rating)
   return i >= 0 ? EC_BAL[i].color : '#6B7280'
 }
+
+// The worst (highest-severity) rating among those given, by BAL spectrum order;
+// null/unknown ratings are ignored. SAFETY: the single property headline uses
+// this so it never sits below ANY individual read (point, photo-sharpened
+// point, or boundary edge). Returns null when nothing is recognisable.
+export function worstBalRating(ratings) {
+  let worst = null
+  let worstIdx = -1
+  for (const rating of ratings) {
+    const i = balIndex(rating)
+    if (i > worstIdx) {
+      worstIdx = i
+      worst = rating
+    }
+  }
+  return worst
+}

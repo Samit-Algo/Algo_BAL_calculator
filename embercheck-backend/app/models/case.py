@@ -57,9 +57,15 @@ class Case(Document):
     property: PropertyInfo
 
     # The FULL /assess response dict, stored verbatim - do NOT re-derive
-    # sub-fields from it. The two fields below are denormalised copies kept only
-    # for fast dashboard listing without unpacking the whole assessment.
+    # sub-fields from it. This is the DEFAULT (centre-point) read, optionally
+    # sharpened in place by the photo step. The two denormalised fields below are
+    # the WORST read across assessment + boundary_assessment (safety: the
+    # headline must never sit below any stored read), kept for fast listing.
     assessment: dict | None = None
+    # The boundary (site-edge) read, stored separately so it coexists with the
+    # point/photo read on ONE case instead of overwriting it. Set/updated by the
+    # boundary endpoints; left None for a point-only case.
+    boundary_assessment: dict | None = None
     bal_rating: str | None = None
     governing_direction: str | None = None
 

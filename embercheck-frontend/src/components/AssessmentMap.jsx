@@ -114,8 +114,9 @@ function ScaleBar() {
 // as a GeoJSON Polygon (WGS84, [lon, lat]); on clear/remove it emits null. Only
 // one site boundary is kept at a time. registerClear hands a clear() function up
 // so the parent's "Clear" button can reset the drawing.
-function DrawControl({ onPolygon, registerClear }) {
+function DrawControl({ onPolygon, registerClear, initialPolygon }) {
   const map = useMap()
+  const initialLoadedRef = useRef(false)
 
   // Keep the latest callbacks in refs so the setup effect runs once per mount -
   // parent re-renders never tear down and rebuild the Geoman controls.
@@ -161,17 +162,20 @@ function DrawControl({ onPolygon, registerClear }) {
       onPolygonRef.current?.(feature.geometry)
     }
 
+    const bindPolygon = (layer) => {
+      layer.on('pm:edit', emit)
+      layer.on('pm:update', emit)
+      layer.on('pm:dragend', emit)
+      emit()
+    }
+
     const handleCreate = (event) => {
       const layer = event.layer
       // Keep a single boundary: drop any earlier polygon.
       drawnPolygons()
         .filter((other) => other !== layer)
         .forEach((other) => other.remove())
-      // Re-emit whenever this layer's vertices move or the whole shape is dragged.
-      layer.on('pm:edit', emit)
-      layer.on('pm:update', emit)
-      layer.on('pm:dragend', emit)
-      emit()
+      bindPolygon(layer)
     }
 
     map.on('pm:create', handleCreate)
@@ -182,6 +186,16 @@ function DrawControl({ onPolygon, registerClear }) {
       drawnPolygons().forEach((layer) => layer.remove())
       onPolygonRef.current?.(null)
     })
+
+    // Pre-load a saved boundary when reopening for edit.
+    if (initialPolygon && !initialLoadedRef.current) {
+      initialLoadedRef.current = true
+      const layer = L.geoJSON(initialPolygon).getLayers()[0]
+      if (layer instanceof L.Polygon) {
+        layer.addTo(map)
+        bindPolygon(layer)
+      }
+    }
 
     return () => {
       map.off('pm:create', handleCreate)
@@ -194,8 +208,9 @@ function DrawControl({ onPolygon, registerClear }) {
       })
       map.pm.removeControls()
       registerClearRef.current?.(null)
+      initialLoadedRef.current = false
     }
-  }, [map])
+  }, [map, initialPolygon])
 
   return null
 }
@@ -476,6 +491,9 @@ export default function AssessmentMap({
   transects,
   governingDirection,
   highlightedSide,
+  drawEnabled = false,
+  initialPolygon = null,
+  siteBoundaryOverlay = null,
 }) {
   // Draw-tool state: whether a site boundary is currently drawn (drives the
   // "Clear" button), and a handle to the DrawControl's clear() function.
@@ -502,9 +520,8 @@ export default function AssessmentMap({
     clearDrawingRef.current = fn
   }, [])
 
-  // The assessed site boundary echoed back by the backend (boundary mode), so
-  // the outline persists in the result view after the drawing layer is gone.
-  const siteBoundary = geometry?.site_polygon || null
+  // Saved boundary outline on the read-only main map (after Done on boundary page).
+  const siteBoundary = siteBoundaryOverlay || geometry?.site_polygon || null
 
   // GeoJSON coordinates are [lon, lat]; Leaflet wants [lat, lon].
   let position = null
@@ -631,7 +648,13 @@ export default function AssessmentMap({
 
           <InvalidateOnResize />
           <ScaleBar />
-          <DrawControl onPolygon={handlePolygon} registerClear={registerClear} />
+          {drawEnabled && (
+            <DrawControl
+              onPolygon={handlePolygon}
+              registerClear={registerClear}
+              initialPolygon={initialPolygon}
+            />
+          )}
 
           {/* The assessed site boundary outline (boundary mode), so it stays
               visible after the interactive drawing layer is gone. */}
@@ -679,7 +702,7 @@ export default function AssessmentMap({
 
         {/* Clear the drawn site boundary. Shown only once something is drawn;
             calls the clear() the DrawControl registered. */}
-        {hasDrawing && (
+        {drawEnabled && hasDrawing && (
           <button
             type="button"
             onClick={() => clearDrawingRef.current?.()}

@@ -80,6 +80,10 @@ export default function NextStepCard({
   initialSharpened = null,
   initialPhotos = null,
   caseStatus = null, // the resumed case's status, or null for a fresh result
+  // Reports the sharpened read up so the property headline can govern to the
+  // WORST of all reads (point, photo-sharpened, boundary). Called on each
+  // successful sharpen; seeded once from a resumed sharpened case below.
+  onSharpened = null,
 }) {
   const { ensureAuthenticated } = useAuth()
   const [capturing, setCapturing] = useState(false)
@@ -157,6 +161,7 @@ export default function NextStepCard({
     try {
       const data = await assessPhotos(context, captured, activeCaseId)
       setSharpened(data)
+      onSharpened?.(data)
       setAdjusted(null)
       setStatus('done')
       setShowPage(true) // move to the result/override page once the read lands

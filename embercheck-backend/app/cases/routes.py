@@ -11,31 +11,25 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import FileResponse
 
 from app.auth.backend import current_active_user
-from app.cases.service import get_owned_case_or_404, polygon_coordinates
+from app.cases.service import get_owned_case_or_404, polygon_coordinates, worst_read
 from app.config import settings as media_settings
 from app.models.assessment import AssessmentRequest
 from app.models.case import Case, CaseStatus, PropertyInfo
 from app.models.user import User
-from app.schemas.case import CaseCreateRequest, CaseRead, CaseSummary
+from app.schemas.case import (
+    BoundaryUpdateRequest,
+    CaseCreateRequest,
+    CaseRead,
+    CaseSummary,
+)
 from app.services.assessment_pipeline import run_assessment
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
 
-@router.post("", response_model=CaseRead, status_code=status.HTTP_201_CREATED)
-async def create_case(
-    body: CaseCreateRequest,
-    user: User = Depends(current_active_user),
-):
-    """Run the assessment server-side via the EXISTING pipeline (identical to
-    /assess) and save it as a DRAFT case owned by the caller."""
-    # Reuse the exact public /assess path (boundary mode included via site_polygon).
-    request = AssessmentRequest(
-        address=body.address,
-        fire_danger_override=body.fire_danger_override,
-        slope_override=body.slope_override,
-        site_polygon=body.boundary_polygon,
-    )
+async def _assess(request: AssessmentRequest) -> dict:
+    """Drive the shared pipeline (identical to /assess) and return the final
+    result dict, surfacing a pipeline error as the matching HTTP status."""
     result = None
     async for kind, payload in run_assessment(request):
         if kind == "error":
@@ -44,26 +38,110 @@ async def create_case(
             )
         if kind == "result":
             result = payload
-
     if result is None:  # pragma: no cover - pipeline always yields a result/error
         raise HTTPException(status_code=500, detail="Assessment did not complete.")
+    return result
+
+
+@router.post("", response_model=CaseRead, status_code=status.HTTP_201_CREATED)
+async def create_case(
+    body: CaseCreateRequest,
+    user: User = Depends(current_active_user),
+):
+    """Run the assessment server-side via the EXISTING pipeline (identical to
+    /assess) and save it as a DRAFT case owned by the caller.
+
+    A `boundary_polygon` creates a BOUNDARY-only case (the read is stored in
+    `boundary_assessment`); the point read is skipped unless `include_point` is
+    set, so a boundary save doesn't double-run the pipeline. Without a polygon it
+    creates a point case. The denormalised headline is the WORST of both reads."""
+    point_result = None
+    boundary_result = None
+
+    if body.boundary_polygon:
+        boundary_result = await _assess(
+            AssessmentRequest(
+                address=body.address,
+                fire_danger_override=body.fire_danger_override,
+                slope_override=body.slope_override,
+                site_polygon=body.boundary_polygon,
+            )
+        )
+        if body.include_point:
+            point_result = await _assess(
+                AssessmentRequest(
+                    address=body.address,
+                    fire_danger_override=body.fire_danger_override,
+                    slope_override=body.slope_override,
+                )
+            )
+    else:
+        point_result = await _assess(
+            AssessmentRequest(
+                address=body.address,
+                fire_danger_override=body.fire_danger_override,
+                slope_override=body.slope_override,
+            )
+        )
+
+    # Property facts come from whichever read we have (both carry the same
+    # top-level geocode / LGA fields). The headline is the worst of the two.
+    facts = point_result or boundary_result
+    worst = worst_read(point_result, boundary_result)
 
     case = Case(
         user_id=user.id,
         property=PropertyInfo(
             address=body.address,
-            matched_address=result.get("matched_address"),
-            latitude=result.get("latitude"),
-            longitude=result.get("longitude"),
-            lga=result.get("lga"),
+            matched_address=facts.get("matched_address"),
+            latitude=facts.get("latitude"),
+            longitude=facts.get("longitude"),
+            lga=facts.get("lga"),
             boundary_polygon=polygon_coordinates(body.boundary_polygon),
         ),
-        assessment=result,
-        bal_rating=result.get("bal_rating"),
-        governing_direction=result.get("governing_direction"),
+        assessment=point_result,
+        boundary_assessment=boundary_result,
+        bal_rating=worst.get("bal_rating") if worst else None,
+        governing_direction=worst.get("governing_direction") if worst else None,
         status=CaseStatus.DRAFT,
     )
     await case.insert()
+    return CaseRead.from_case(case)
+
+
+@router.put("/{case_id}/boundary", response_model=CaseRead)
+async def update_case_boundary(
+    case_id: str,
+    body: BoundaryUpdateRequest,
+    user: User = Depends(current_active_user),
+):
+    """(Re)assess from a drawn boundary and store it on an EXISTING case in
+    place, so editing a boundary updates the same record instead of inserting a
+    duplicate. The point/photo read (`assessment`) and photos are left intact;
+    the denormalised headline is recomputed as the WORST of both reads."""
+    case = await get_owned_case_or_404(case_id, user.id)
+    address = case.property.address
+    if not address:
+        raise HTTPException(
+            status_code=400, detail="The case has no address to assess."
+        )
+
+    boundary_result = await _assess(
+        AssessmentRequest(
+            address=address,
+            fire_danger_override=body.fire_danger_override,
+            slope_override=body.slope_override,
+            site_polygon=body.boundary_polygon,
+        )
+    )
+
+    case.boundary_assessment = boundary_result
+    case.property.boundary_polygon = polygon_coordinates(body.boundary_polygon)
+    worst = worst_read(case.assessment, boundary_result)
+    case.bal_rating = worst.get("bal_rating") if worst else None
+    case.governing_direction = worst.get("governing_direction") if worst else None
+    case.updated_at = datetime.now(timezone.utc)
+    await case.save()
     return CaseRead.from_case(case)
 
 

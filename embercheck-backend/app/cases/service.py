@@ -10,6 +10,22 @@ from bson.errors import InvalidId
 from fastapi import HTTPException, status
 
 from app.models.case import Case, CasePhoto
+from app.services.assessment_pipeline import BAL_SEVERITY
+
+
+def worst_read(*reads: dict | None) -> dict | None:
+    """The worst (highest-BAL) read among those given, ignoring None.
+
+    SAFETY: a case can hold several reads (the point read, the photo-sharpened
+    point read, and the boundary edge read). The denormalised headline
+    (``bal_rating`` / ``governing_direction``) must never sit below ANY stored
+    read, so callers pick the worst with this and copy its ``bal_rating`` +
+    ``governing_direction`` onto the case. Returns None only when every read is
+    None / lacks a rating."""
+    present = [r for r in reads if r and r.get("bal_rating")]
+    if not present:
+        return None
+    return max(present, key=lambda r: BAL_SEVERITY.get(r["bal_rating"], -1))
 
 
 async def get_owned_case_or_404(case_id: str, user_id: PydanticObjectId) -> Case:
@@ -28,22 +44,30 @@ async def get_owned_case_or_404(case_id: str, user_id: PydanticObjectId) -> Case
 
 
 def governing_vegetation(case) -> str | None:
-    """The vegetation class of the GOVERNING side, derived ON READ from the
-    stored assessment (e.g. "Woodland") so a case shows the side that sets the
-    BAL rather than the top-level "Not classified". Read-only: never writes or
-    backfills. Falls back to the top-level vegetation_type, then None."""
-    assessment = case.assessment or {}
-    direction = case.governing_direction or assessment.get("governing_direction")
-    per_direction = assessment.get("per_direction") or []
+    """The vegetation class of the GOVERNING side, derived ON READ (e.g.
+    "Woodland") so a case shows the side that sets the BAL rather than the
+    top-level "Not classified". Searches BOTH stored reads (point + boundary) so
+    a boundary-only case still resolves. Read-only: never writes or backfills.
+    Falls back to a top-level vegetation_type, then None."""
+    reads = [r for r in (case.assessment, case.boundary_assessment) if r]
+    direction = case.governing_direction or next(
+        (r.get("governing_direction") for r in reads if r.get("governing_direction")),
+        None,
+    )
 
     if direction:
-        for side in per_direction:
-            if str(side.get("direction", "")).lower() == str(direction).lower():
-                veg = side.get("vegetation_class")
-                if veg:
-                    return veg
+        for read in reads:
+            for side in read.get("per_direction") or []:
+                if str(side.get("direction", "")).lower() == str(direction).lower():
+                    veg = side.get("vegetation_class")
+                    if veg:
+                        return veg
 
-    return assessment.get("vegetation_type") or None
+    for read in reads:
+        veg = read.get("vegetation_type")
+        if veg:
+            return veg
+    return None
 
 
 def polygon_coordinates(geojson: dict | None) -> list:

@@ -28,6 +28,36 @@ export async function createCase({ address, boundaryPolygon, fireDangerOverride,
   return response.json()
 }
 
+// (Re)assess a drawn boundary on an EXISTING case in place (PUT). Used by the
+// boundary edit/re-assess flow so an edited polygon updates the same case
+// instead of inserting a duplicate. Returns the updated case (CaseRead, incl.
+// boundary_assessment). Throws a friendly Error.
+export async function updateCaseBoundary(
+  caseId,
+  { boundaryPolygon, fireDangerOverride, slopeOverride } = {},
+) {
+  const body = { boundary_polygon: boundaryPolygon }
+  if (fireDangerOverride != null) body.fire_danger_override = fireDangerOverride
+  if (slopeOverride != null) body.slope_override = slopeOverride
+
+  let response
+  try {
+    response = await apiFetch(`/cases/${caseId}/boundary`, {
+      method: 'PUT',
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw new Error('We couldn’t reach the server. Please try again.')
+  }
+
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Please log in to continue.')
+    if (response.status === 404) throw new Error('That property record has expired. Please start again.')
+    throw new Error('We couldn’t assess your boundary just now. Please try again.')
+  }
+  return response.json()
+}
+
 // Fetch one of the caller's cases by id (used for resume).
 export async function getCase(caseId) {
   const response = await apiFetch(`/cases/${caseId}`)
