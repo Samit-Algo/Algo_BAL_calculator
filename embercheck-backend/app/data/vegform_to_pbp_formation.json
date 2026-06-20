@@ -1,0 +1,26 @@
+{
+  "_meta": {
+    "purpose": "Bridges an SVTM 'vegForm' (Keith 2004 formation) to the exact PBP BAL-table formation key used in pbp_bal_tables.json.",
+    "match_method": "Sort rules by 'priority' (ascending). First rule whose 'match_keyword' is a substring of the vegForm wins.",
+    "null_handling": "pbp_formation = null means 'no reliable mapping'. The engine must substitute worst-case 'Forest (...)' AND set requires_manual_review = true. null is NOT the same as 'no vegetation found' (that is handled upstream by vegetation_found = False -> BAL-LOW).",
+    "default_if_no_match": "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)",
+    "default_note": "Unmatched vegForm -> Forest row (worst case) AND requires_manual_review = true.",
+    "pct_override_note": "Rules with requires_pct_override = true cannot be fully resolved from vegForm alone (e.g. Coastal Swamp Forest sits inside the Forested Wetlands formation but belongs in 'Forest' under PBP). A future PCT/class-level check should override these.",
+    "alpine_note": "Alpine Complex only exists in the FDI 50 table. If it appears with FDI 80/100, the engine should fall back to the Forest row + manual_review (do NOT crash).",
+    "status": "DRAFT v2 - manual_review rows need bushfire/ecology sign-off before non-screening use."
+  },
+  "rules": [
+    { "priority": 10, "match_keyword": "Not classified",   "pbp_formation": null, "confidence": "Unknown", "manual_review": true,  "note": "No reliable classification -> engine uses worst-case Forest until reviewed. (Normally never reached: handled upstream by vegetation_found=False.)" },
+    { "priority": 20, "match_keyword": "Saline Wetland",    "pbp_formation": "Excluded", "confidence": "Medium", "manual_review": true,  "note": "Mangrove/saltmarsh - typically low-threat/non-combustible. Verify exclusion." },
+    { "priority": 30, "match_keyword": "Rainforest",        "pbp_formation": "Rainforest", "confidence": "High", "manual_review": false, "note": "Direct match." },
+    { "priority": 40, "match_keyword": "Sclerophyll Forest","pbp_formation": "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)", "confidence": "High", "manual_review": false, "note": "Wet & Dry Sclerophyll Forests -> Forest." },
+    { "priority": 50, "match_keyword": "Forested Wetland",  "pbp_formation": "Forested Wetland (excluding Coastal Swamp Forest)", "confidence": "Medium", "manual_review": true, "requires_pct_override": true, "note": "Coastal Swamp Forest subset belongs in 'Forest' under PBP - override at PCT/class level." },
+    { "priority": 60, "match_keyword": "Freshwater Wetland","pbp_formation": "Freshwater Wetlands", "confidence": "Medium", "manual_review": true, "note": "Sedge/reed wetland - some are low-threat exclusions. Verify." },
+    { "priority": 70, "match_keyword": "Grassy Woodland",   "pbp_formation": "Grassy and Semi-Arid Woodland (including Mallee)", "confidence": "High", "manual_review": false, "note": "Woodland over grass." },
+    { "priority": 80, "match_keyword": "Semi-arid Woodland","pbp_formation": "Grassy and Semi-Arid Woodland (including Mallee)", "confidence": "Medium", "manual_review": true, "note": "Includes mallee per PBP. Verify per PCT." },
+    { "priority": 90, "match_keyword": "Heath",             "pbp_formation": "Tall Heath", "confidence": "Low", "manual_review": true, "note": "Keith 'Heathlands' does NOT split tall vs short; defaulted to Tall Heath (conservative). Verify height/structure for Tall vs Short." },
+    { "priority": 100, "match_keyword": "Arid Shrubland",   "pbp_formation": "Arid-Shrublands (acacia and chenopod)", "confidence": "Medium", "manual_review": true, "note": "Covers acacia (mulga) and chenopod sub-formations." },
+    { "priority": 110, "match_keyword": "Alpine",           "pbp_formation": "Alpine Complex", "confidence": "Medium", "manual_review": true, "note": "Alpine Complex only in FDI 50 table; fall back to Forest + review if FDI != 50." },
+    { "priority": 120, "match_keyword": "Grassland",        "pbp_formation": "Grassland", "confidence": "High", "manual_review": false, "note": "Direct match." }
+  ]
+}

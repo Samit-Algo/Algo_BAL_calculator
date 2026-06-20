@@ -1,0 +1,1027 @@
+{
+  "_meta": {
+    "source": "NSW RFS Planning for Bush Fire Protection 2019 - Appendix 1, Tables A1.12.5 (FDI100), A1.12.6 (FDI80), A1.12.7 (FDI50 alpine)",
+    "classification": "NSW Keith Vegetation Formations (9; FDI50 alpine has 10 incl Alpine Complex) - NOT the generic AS3959 7 classes",
+    "columns": "[FZ_upper, BAL40_upper, BAL29_upper, BAL19_upper, BAL12.5_upper] in metres",
+    "rule": "d<t1:BAL-FZ | t1<=d<t2:BAL-40 | t2<=d<t3:BAL-29 | t3<=d<t4:BAL-19 | t4<=d<t5:BAL-12.5 | d>=t5:BAL-LOW",
+    "status": "FDI100 & FDI80 verified against page image; FDI50 alpine parsed (10 formations)"
+  },
+  "tables": {
+    "100": {
+      "Upslope/Flat": {
+        "Rainforest": [
+          8,
+          11,
+          16,
+          23,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          18,
+          24,
+          33,
+          45,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          9,
+          12,
+          18,
+          26,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          7,
+          10,
+          14,
+          21,
+          100
+        ],
+        "Tall Heath": [
+          12,
+          16,
+          23,
+          32,
+          100
+        ],
+        "Short Heath": [
+          7,
+          9,
+          14,
+          20,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          5,
+          6,
+          9,
+          14,
+          100
+        ],
+        "Freshwater Wetlands": [
+          4,
+          5,
+          7,
+          11,
+          100
+        ],
+        "Grassland": [
+          8,
+          10,
+          15,
+          22,
+          50
+        ]
+      },
+      ">0-5 downslope": {
+        "Rainforest": [
+          11,
+          14,
+          21,
+          29,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          22,
+          29,
+          40,
+          54,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          12,
+          16,
+          23,
+          32,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          9,
+          12,
+          18,
+          26,
+          100
+        ],
+        "Tall Heath": [
+          13,
+          18,
+          26,
+          36,
+          100
+        ],
+        "Short Heath": [
+          8,
+          10,
+          15,
+          22,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          5,
+          7,
+          11,
+          16,
+          100
+        ],
+        "Freshwater Wetlands": [
+          4,
+          6,
+          8,
+          12,
+          100
+        ],
+        "Grassland": [
+          9,
+          12,
+          17,
+          25,
+          50
+        ]
+      },
+      ">5-10 downslope": {
+        "Rainforest": [
+          14,
+          18,
+          26,
+          37,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          28,
+          36,
+          49,
+          65,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          15,
+          20,
+          28,
+          39,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          12,
+          16,
+          23,
+          33,
+          100
+        ],
+        "Tall Heath": [
+          15,
+          20,
+          29,
+          40,
+          100
+        ],
+        "Short Heath": [
+          9,
+          12,
+          18,
+          25,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          6,
+          8,
+          12,
+          18,
+          100
+        ],
+        "Freshwater Wetlands": [
+          5,
+          6,
+          10,
+          14,
+          100
+        ],
+        "Grassland": [
+          10,
+          13,
+          20,
+          28,
+          50
+        ]
+      },
+      ">10-15 downslope": {
+        "Rainforest": [
+          17,
+          23,
+          34,
+          46,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          36,
+          45,
+          60,
+          77,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          19,
+          25,
+          36,
+          49,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          15,
+          20,
+          29,
+          41,
+          100
+        ],
+        "Tall Heath": [
+          17,
+          22,
+          32,
+          44,
+          100
+        ],
+        "Short Heath": [
+          10,
+          13,
+          20,
+          29,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          7,
+          9,
+          14,
+          20,
+          100
+        ],
+        "Freshwater Wetlands": [
+          5,
+          7,
+          11,
+          16,
+          100
+        ],
+        "Grassland": [
+          11,
+          15,
+          23,
+          32,
+          50
+        ]
+      },
+      ">15-20 downslope": {
+        "Rainforest": [
+          23,
+          30,
+          42,
+          56,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          46,
+          56,
+          73,
+          92,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          24,
+          32,
+          44,
+          59,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          19,
+          26,
+          37,
+          50,
+          100
+        ],
+        "Tall Heath": [
+          19,
+          25,
+          36,
+          49,
+          100
+        ],
+        "Short Heath": [
+          11,
+          15,
+          23,
+          32,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          7,
+          10,
+          16,
+          23,
+          100
+        ],
+        "Freshwater Wetlands": [
+          6,
+          8,
+          13,
+          18,
+          100
+        ],
+        "Grassland": [
+          13,
+          17,
+          26,
+          36,
+          50
+        ]
+      }
+    },
+    "80": {
+      "Upslope/Flat": {
+        "Rainforest": [
+          7,
+          9,
+          14,
+          20,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          15,
+          20,
+          29,
+          40,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          8,
+          11,
+          16,
+          22,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          6,
+          8,
+          12,
+          18,
+          100
+        ],
+        "Tall Heath": [
+          12,
+          16,
+          23,
+          32,
+          100
+        ],
+        "Short Heath": [
+          7,
+          9,
+          14,
+          20,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          5,
+          6,
+          9,
+          14,
+          100
+        ],
+        "Freshwater Wetlands": [
+          4,
+          5,
+          7,
+          11,
+          100
+        ],
+        "Grassland": [
+          7,
+          10,
+          14,
+          20,
+          50
+        ]
+      },
+      ">0-5 downslope": {
+        "Rainforest": [
+          9,
+          12,
+          17,
+          25,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          19,
+          25,
+          35,
+          47,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          10,
+          13,
+          19,
+          28,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          8,
+          10,
+          15,
+          22,
+          100
+        ],
+        "Tall Heath": [
+          13,
+          18,
+          26,
+          36,
+          100
+        ],
+        "Short Heath": [
+          8,
+          10,
+          15,
+          22,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          5,
+          7,
+          11,
+          16,
+          100
+        ],
+        "Freshwater Wetlands": [
+          4,
+          6,
+          8,
+          12,
+          100
+        ],
+        "Grassland": [
+          8,
+          11,
+          16,
+          23,
+          50
+        ]
+      },
+      ">5-10 downslope": {
+        "Rainforest": [
+          11,
+          15,
+          22,
+          32,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          24,
+          31,
+          43,
+          57,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          12,
+          17,
+          24,
+          34,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          10,
+          13,
+          20,
+          28,
+          100
+        ],
+        "Tall Heath": [
+          15,
+          20,
+          29,
+          40,
+          100
+        ],
+        "Short Heath": [
+          9,
+          12,
+          18,
+          25,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          6,
+          8,
+          12,
+          18,
+          100
+        ],
+        "Freshwater Wetlands": [
+          5,
+          6,
+          10,
+          14,
+          100
+        ],
+        "Grassland": [
+          9,
+          12,
+          18,
+          26,
+          50
+        ]
+      },
+      ">10-15 downslope": {
+        "Rainforest": [
+          14,
+          20,
+          29,
+          40,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          30,
+          39,
+          52,
+          68,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          16,
+          21,
+          31,
+          42,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          12,
+          17,
+          25,
+          35,
+          100
+        ],
+        "Tall Heath": [
+          17,
+          22,
+          32,
+          44,
+          100
+        ],
+        "Short Heath": [
+          10,
+          13,
+          20,
+          29,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          7,
+          9,
+          14,
+          20,
+          100
+        ],
+        "Freshwater Wetlands": [
+          5,
+          7,
+          11,
+          16,
+          100
+        ],
+        "Grassland": [
+          10,
+          14,
+          21,
+          30,
+          50
+        ]
+      },
+      ">15-20 downslope": {
+        "Rainforest": [
+          19,
+          25,
+          36,
+          49,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          38,
+          48,
+          63,
+          81,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          20,
+          27,
+          38,
+          52,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          16,
+          22,
+          32,
+          43,
+          100
+        ],
+        "Tall Heath": [
+          19,
+          25,
+          36,
+          49,
+          100
+        ],
+        "Short Heath": [
+          11,
+          15,
+          23,
+          32,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          7,
+          10,
+          16,
+          23,
+          100
+        ],
+        "Freshwater Wetlands": [
+          6,
+          8,
+          13,
+          18,
+          100
+        ],
+        "Grassland": [
+          12,
+          16,
+          24,
+          34,
+          50
+        ]
+      }
+    },
+    "50": {
+      "Upslope/Flat": {
+        "Rainforest": [
+          5,
+          7,
+          10,
+          15,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          11,
+          15,
+          22,
+          30,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          6,
+          8,
+          12,
+          17,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          5,
+          6,
+          9,
+          13,
+          100
+        ],
+        "Tall Heath": [
+          12,
+          16,
+          23,
+          32,
+          100
+        ],
+        "Short Heath": [
+          7,
+          9,
+          14,
+          20,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          5,
+          6,
+          9,
+          14,
+          100
+        ],
+        "Freshwater Wetlands": [
+          4,
+          5,
+          7,
+          11,
+          100
+        ],
+        "Alpine Complex": [
+          4,
+          6,
+          8,
+          12,
+          100
+        ],
+        "Grassland": [
+          6,
+          8,
+          11,
+          17,
+          50
+        ]
+      },
+      ">0-5 downslope": {
+        "Rainforest": [
+          6,
+          8,
+          12,
+          18,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          14,
+          18,
+          26,
+          36,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          7,
+          10,
+          14,
+          21,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          6,
+          8,
+          11,
+          16,
+          100
+        ],
+        "Tall Heath": [
+          13,
+          18,
+          26,
+          36,
+          100
+        ],
+        "Short Heath": [
+          8,
+          10,
+          15,
+          22,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          5,
+          7,
+          11,
+          16,
+          100
+        ],
+        "Freshwater Wetlands": [
+          4,
+          6,
+          8,
+          12,
+          100
+        ],
+        "Alpine Complex": [
+          5,
+          6,
+          10,
+          14,
+          100
+        ],
+        "Grassland": [
+          7,
+          9,
+          13,
+          19,
+          50
+        ]
+      },
+      ">5-10 downslope": {
+        "Rainforest": [
+          8,
+          11,
+          16,
+          23,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          17,
+          22,
+          32,
+          43,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          9,
+          12,
+          17,
+          25,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          7,
+          9,
+          14,
+          20,
+          100
+        ],
+        "Tall Heath": [
+          15,
+          20,
+          29,
+          40,
+          100
+        ],
+        "Short Heath": [
+          9,
+          12,
+          18,
+          25,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          6,
+          8,
+          12,
+          18,
+          100
+        ],
+        "Freshwater Wetlands": [
+          5,
+          6,
+          10,
+          14,
+          100
+        ],
+        "Alpine Complex": [
+          5,
+          7,
+          11,
+          16,
+          100
+        ],
+        "Grassland": [
+          7,
+          10,
+          15,
+          22,
+          50
+        ]
+      },
+      ">10-15 downslope": {
+        "Rainforest": [
+          10,
+          13,
+          20,
+          29,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          21,
+          28,
+          39,
+          52,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          11,
+          15,
+          22,
+          31,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          9,
+          12,
+          18,
+          26,
+          100
+        ],
+        "Tall Heath": [
+          17,
+          22,
+          32,
+          44,
+          100
+        ],
+        "Short Heath": [
+          10,
+          13,
+          20,
+          29,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          7,
+          9,
+          14,
+          20,
+          100
+        ],
+        "Freshwater Wetlands": [
+          5,
+          7,
+          11,
+          16,
+          100
+        ],
+        "Alpine Complex": [
+          6,
+          8,
+          12,
+          18,
+          100
+        ],
+        "Grassland": [
+          8,
+          12,
+          17,
+          25,
+          50
+        ]
+      },
+      ">15-20 downslope": {
+        "Rainforest": [
+          13,
+          17,
+          26,
+          36,
+          100
+        ],
+        "Forest (wet/dry sclerophyll; incl Coastal Swamp Forest, Pine Plantations, Sub-Alpine Woodland)": [
+          26,
+          34,
+          47,
+          63,
+          100
+        ],
+        "Grassy and Semi-Arid Woodland (including Mallee)": [
+          14,
+          19,
+          28,
+          38,
+          100
+        ],
+        "Forested Wetland (excluding Coastal Swamp Forest)": [
+          7,
+          15,
+          23,
+          32,
+          100
+        ],
+        "Tall Heath": [
+          19,
+          25,
+          36,
+          49,
+          100
+        ],
+        "Short Heath": [
+          11,
+          15,
+          23,
+          32,
+          100
+        ],
+        "Arid-Shrublands (acacia and chenopod)": [
+          7,
+          10,
+          16,
+          23,
+          100
+        ],
+        "Freshwater Wetlands": [
+          6,
+          8,
+          13,
+          18,
+          100
+        ],
+        "Alpine Complex": [
+          7,
+          9,
+          14,
+          21,
+          100
+        ],
+        "Grassland": [
+          10,
+          13,
+          20,
+          28,
+          50
+        ]
+      }
+    }
+  }
+}

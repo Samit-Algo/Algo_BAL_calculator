@@ -1,0 +1,821 @@
+{
+  "_meta": {
+    "title": "SVTM Vegetation Class (Layer 1) -> AS 3959 crosswalk (v2)",
+    "status": "DRAFT - manual_review rows need bushfire/ecology sign-off before production",
+    "schema": "svtm_class, as3959_class (null=unknown), confidence, manual_review, priority, review_reason",
+    "runtime_rule": "null/unknown class -> engine uses worst case 'Forest' AND sets manual_review on the result",
+    "as3959_classes": [
+      "Forest",
+      "Woodland",
+      "Shrubland",
+      "Scrub",
+      "Mallee/Mulga",
+      "Rainforest",
+      "Grassland",
+      "Excluded"
+    ],
+    "total": 100
+  },
+  "crosswalk": [
+    {
+      "svtm_class": "Aeolian Chenopod Shrublands",
+      "as3959_class": "Shrubland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Alpine Bogs and Fens",
+      "as3959_class": "Excluded",
+      "confidence": "Low",
+      "manual_review": true,
+      "priority": "High",
+      "review_reason": "Wet/swamp/marsh may still carry fire - confirm exclusion (do not assume safe)"
+    },
+    {
+      "svtm_class": "Alpine Fjaeldmarks",
+      "as3959_class": "Excluded",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Low",
+      "review_reason": "Sparse alpine rock/herb - likely low threat; confirm"
+    },
+    {
+      "svtm_class": "Alpine Heaths",
+      "as3959_class": "Scrub",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Medium",
+      "review_reason": "Alpine heath is low - reviewer may downgrade Scrub -> Shrubland"
+    },
+    {
+      "svtm_class": "Alpine Herbfields",
+      "as3959_class": "Grassland",
+      "confidence": "Low",
+      "manual_review": true,
+      "priority": "Low",
+      "review_reason": "Low herbfield treated as Grassland/low threat; confirm"
+    },
+    {
+      "svtm_class": "Brigalow Clay Plain Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Candidate native grasslands",
+      "as3959_class": "Grassland",
+      "confidence": "Low",
+      "manual_review": true,
+      "priority": "Medium",
+      "review_reason": "Provisional SVTM category - confirm it is grassland"
+    },
+    {
+      "svtm_class": "Central Gorge Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Clarence Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Coastal Dune Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Coastal Floodplain Wetlands",
+      "as3959_class": "Excluded",
+      "confidence": "Low",
+      "manual_review": true,
+      "priority": "High",
+      "review_reason": "Wet/swamp/marsh may still carry fire - confirm exclusion (do not assume safe)"
+    },
+    {
+      "svtm_class": "Coastal Freshwater Lagoons",
+      "as3959_class": "Excluded",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": "Open water / non-vegetated - safe low-threat exclusion"
+    },
+    {
+      "svtm_class": "Coastal Headland Heaths",
+      "as3959_class": "Scrub",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Medium",
+      "review_reason": "Heath: Scrub vs Shrubland - defaulted higher-risk Scrub; confirm structure"
+    },
+    {
+      "svtm_class": "Coastal Heath Swamps",
+      "as3959_class": "Excluded",
+      "confidence": "Low",
+      "manual_review": true,
+      "priority": "High",
+      "review_reason": "Wet/swamp/marsh may still carry fire - confirm exclusion (do not assume safe)"
+    },
+    {
+      "svtm_class": "Coastal Swamp Forests",
+      "as3959_class": "Forest",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Low",
+      "review_reason": "Swamp FOREST kept as Forest; confirm not low-threat wet"
+    },
+    {
+      "svtm_class": "Coastal Valley Grassy Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Cool Temperate Rainforests",
+      "as3959_class": "Rainforest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Cumberland Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Desert Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Dry Rainforests",
+      "as3959_class": "Rainforest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Dune Mallee Woodlands",
+      "as3959_class": "Mallee/Mulga",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Eastern Riverine Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Floodplain Transition Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Gibber Chenopod Shrublands",
+      "as3959_class": "Shrubland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Gibber Transition Shrublands",
+      "as3959_class": "Shrubland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Hunter-Macleay Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Inland Floodplain Shrublands",
+      "as3959_class": "Shrubland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Inland Floodplain Swamps",
+      "as3959_class": "Excluded",
+      "confidence": "Low",
+      "manual_review": true,
+      "priority": "High",
+      "review_reason": "Wet/swamp/marsh may still carry fire - confirm exclusion (do not assume safe)"
+    },
+    {
+      "svtm_class": "Inland Floodplain Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Inland Riverine Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Inland Rocky Hill Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Inland Saline Lakes",
+      "as3959_class": "Excluded",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": "Open water / non-vegetated - safe low-threat exclusion"
+    },
+    {
+      "svtm_class": "Littoral Rainforests",
+      "as3959_class": "Rainforest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Mangrove Swamps",
+      "as3959_class": "Excluded",
+      "confidence": "Low",
+      "manual_review": true,
+      "priority": "High",
+      "review_reason": "Wet/swamp/marsh may still carry fire - confirm exclusion (do not assume safe)"
+    },
+    {
+      "svtm_class": "Maritime Grasslands",
+      "as3959_class": "Grassland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Montane Bogs and Fens",
+      "as3959_class": "Excluded",
+      "confidence": "Low",
+      "manual_review": true,
+      "priority": "High",
+      "review_reason": "Wet/swamp/marsh may still carry fire - confirm exclusion (do not assume safe)"
+    },
+    {
+      "svtm_class": "Montane Lakes",
+      "as3959_class": "Excluded",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": "Open water / non-vegetated - safe low-threat exclusion"
+    },
+    {
+      "svtm_class": "Montane Wet Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "New England Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "New England Grassy Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Non vegetated",
+      "as3959_class": "Excluded",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": "Open water / non-vegetated - safe low-threat exclusion"
+    },
+    {
+      "svtm_class": "North Coast Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "North Coast Wet Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "North-west Alluvial Sand Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "North-west Floodplain Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "North-west Plain Shrublands",
+      "as3959_class": "Shrubland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "North-west Slopes Dry Sclerophyll Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Low",
+      "review_reason": "Named Woodland but dry sclerophyll - confirm Woodland vs Forest"
+    },
+    {
+      "svtm_class": "Northern Escarpment Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Northern Escarpment Wet Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Northern Gorge Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Northern Hinterland Wet Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Northern Montane Heaths",
+      "as3959_class": "Scrub",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Medium",
+      "review_reason": "Heath: Scrub vs Shrubland - defaulted higher-risk Scrub; confirm structure"
+    },
+    {
+      "svtm_class": "Northern Tableland Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Northern Tableland Wet Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Northern Warm Temperate Rainforests",
+      "as3959_class": "Rainforest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Not classified",
+      "as3959_class": null,
+      "confidence": "Unknown",
+      "manual_review": true,
+      "priority": "High",
+      "review_reason": "SVTM gave no reliable class - engine uses worst-case (Forest) until reviewed"
+    },
+    {
+      "svtm_class": "Pilliga Outwash Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Riverine Chenopod Shrublands",
+      "as3959_class": "Shrubland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Riverine Plain Grasslands",
+      "as3959_class": "Grassland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Riverine Plain Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Riverine Sandhill Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Saltmarshes",
+      "as3959_class": "Excluded",
+      "confidence": "Low",
+      "manual_review": true,
+      "priority": "High",
+      "review_reason": "Wet/swamp/marsh may still carry fire - confirm exclusion (do not assume safe)"
+    },
+    {
+      "svtm_class": "Sand Plain Mallee Woodlands",
+      "as3959_class": "Mallee/Mulga",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Sand Plain Mulga Shrublands",
+      "as3959_class": "Mallee/Mulga",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Semi-arid Floodplain Grasslands",
+      "as3959_class": "Grassland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Semi-arid Sand Plain Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "South Coast Heaths",
+      "as3959_class": "Scrub",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Medium",
+      "review_reason": "Heath: Scrub vs Shrubland - defaulted higher-risk Scrub; confirm structure"
+    },
+    {
+      "svtm_class": "South Coast Sands Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "South Coast Wet Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "South East Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Southern Escarpment Wet Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Southern Hinterland Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Southern Lowland Wet Sclerophyll forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Southern Montane Heaths",
+      "as3959_class": "Scrub",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Medium",
+      "review_reason": "Heath: Scrub vs Shrubland - defaulted higher-risk Scrub; confirm structure"
+    },
+    {
+      "svtm_class": "Southern Tableland Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Southern Tableland Grassy Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Southern Tableland Wet Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Southern Warm Temperate Rainforests",
+      "as3959_class": "Rainforest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Southern Wattle Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Stony Desert Mulga Shrublands",
+      "as3959_class": "Mallee/Mulga",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Subalpine Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Subtropical Rainforests",
+      "as3959_class": "Rainforest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Subtropical Semi-arid Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Sydney Coastal Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Sydney Coastal Heaths",
+      "as3959_class": "Scrub",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Medium",
+      "review_reason": "Heath: Scrub vs Shrubland - defaulted higher-risk Scrub; confirm structure"
+    },
+    {
+      "svtm_class": "Sydney Hinterland Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Sydney Montane Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Sydney Montane Heaths",
+      "as3959_class": "Scrub",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Medium",
+      "review_reason": "Heath: Scrub vs Shrubland - defaulted higher-risk Scrub; confirm structure"
+    },
+    {
+      "svtm_class": "Sydney Sand Flats Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Tableland Clay Grassy Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Temperate Montane Grasslands",
+      "as3959_class": "Grassland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Unattributed",
+      "as3959_class": null,
+      "confidence": "Unknown",
+      "manual_review": true,
+      "priority": "High",
+      "review_reason": "SVTM gave no reliable class - engine uses worst-case (Forest) until reviewed"
+    },
+    {
+      "svtm_class": "Upper Riverina Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Wallum Sand Heaths",
+      "as3959_class": "Scrub",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Medium",
+      "review_reason": "Heath: Scrub vs Shrubland - defaulted higher-risk Scrub; confirm structure"
+    },
+    {
+      "svtm_class": "Western Peneplain Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Western Slopes Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Western Slopes Grasslands",
+      "as3959_class": "Grassland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Western Slopes Grassy Woodlands",
+      "as3959_class": "Woodland",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    },
+    {
+      "svtm_class": "Western Vine Thickets",
+      "as3959_class": "Rainforest",
+      "confidence": "Medium",
+      "manual_review": true,
+      "priority": "Low",
+      "review_reason": "Vine thicket = dry rainforest; confirm Rainforest"
+    },
+    {
+      "svtm_class": "Yetman Dry Sclerophyll Forests",
+      "as3959_class": "Forest",
+      "confidence": "High",
+      "manual_review": false,
+      "priority": null,
+      "review_reason": ""
+    }
+  ]
+}

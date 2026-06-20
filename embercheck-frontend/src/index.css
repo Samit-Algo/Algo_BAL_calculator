@@ -1,0 +1,254 @@
+/* Leaflet's stylesheet must load or map tiles render as a grey box. */
+@import 'leaflet/dist/leaflet.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────
+   EmberCheck design tokens — the "Eucalypt & ochre" theme, ported
+   from the reference. Components read these as CSS custom properties.
+   ───────────────────────────────────────────────────────────── */
+:root {
+  --font-display: 'Alegreya Sans', 'Helvetica Neue', sans-serif;
+  --font-ui: 'Source Sans 3', 'Helvetica Neue', sans-serif;
+  --paper: #f3eedf;
+  --paper-deep: #ddd7c4;
+  --card: #fbf8ee;
+  --ink: #2b2920;
+  --ink-soft: #6b6552;
+  --euc: #5e6b4f;
+  --euc-deep: #3c4733;
+  --ochre: #c28e3f;
+  --ochre-soft: #dcb877;
+  --line: rgba(43, 41, 32, 0.13);
+  --contour: rgba(148, 128, 78, 0.42);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Shared app header bar (entry + results): logo left, auth right. Padding lives
+   here so it can tighten on phones. */
+.ec-app-header-inner {
+  padding: 14px 24px;
+}
+@media (max-width: 640px) {
+  .ec-app-header-inner {
+    padding: 12px 16px;
+  }
+}
+
+/* Press / hover affordances for buttons. */
+.ec-press {
+  transition: transform 0.14s ease, box-shadow 0.2s ease, filter 0.2s ease;
+}
+.ec-press:hover {
+  filter: brightness(1.04);
+}
+.ec-press:active {
+  transform: scale(0.97);
+}
+
+/* Hidden scrollbars for the result column. */
+.ec-scroll {
+  scrollbar-width: none;
+}
+.ec-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+input::placeholder {
+  color: color-mix(in oklab, var(--ink) 38%, transparent);
+}
+
+@keyframes ecSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.ec-spin {
+  display: inline-flex;
+  animation: ecSpin 0.9s linear infinite;
+}
+@keyframes ecPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.3);
+  }
+}
+@keyframes ecPop {
+  from {
+    transform: scale(0.55);
+  }
+}
+@keyframes ecScreenIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+}
+.ec-screen-in {
+  animation: ecScreenIn 0.5s cubic-bezier(0.25, 0.8, 0.3, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ec-press,
+  .ec-screen-in {
+    animation: none !important;
+    transition: none !important;
+  }
+}
+
+/* Leaflet tweaks so the map reads inside the paper/card theme. */
+.leaflet-container {
+  font-family: var(--font-ui);
+  background: var(--paper-deep);
+}
+
+/* Guided capture flow: full-screen on mobile, a centered phone-ish frame on
+   desktop. */
+.ec-capture-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  background: rgba(20, 18, 11, 0.78);
+}
+.ec-capture-panel {
+  position: relative;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--paper);
+}
+@media (min-width: 560px) {
+  .ec-capture-overlay {
+    align-items: center;
+    padding: 24px;
+  }
+  .ec-capture-panel {
+    width: 440px;
+    max-width: 100%;
+    height: min(880px, 94vh);
+    border-radius: 28px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+  }
+}
+
+/* ── Result layout ─────────────────────────────────────────────── */
+
+/* Base (small screens): single column, normal page scroll. */
+.ec-results-title {
+  padding-top: 24px;
+  margin-bottom: 22px;
+}
+.ec-map-frame {
+  height: min(72vh, 600px);
+}
+.ec-story-col {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* Wide screens: a fit-to-screen dashboard. The whole results area fills the
+   viewport (no page scroll); the map fills the left at full height and stays
+   put; only the right story panel scrolls inside its own box. */
+@media (min-width: 1000px) {
+  .ec-results {
+    height: calc(100vh - 72px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-sizing: border-box;
+  }
+  .ec-results-title {
+    flex-shrink: 0;
+    padding-top: 28px;
+    margin-bottom: 18px;
+  }
+  .ec-results-grid {
+    grid-template-columns: minmax(0, 1fr) 440px !important;
+    flex: 1;
+    min-height: 0;
+  }
+  .ec-map-col {
+    min-height: 0;
+  }
+  .ec-map-card {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+  }
+  .ec-map-frame {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+  }
+  .ec-story-col {
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 8px;
+  }
+  /* No page scroll on desktop — drop the shell's bottom padding so header +
+     results add up to exactly the viewport height. */
+  .ec-shell-pad {
+    padding-bottom: 0 !important;
+  }
+}
+
+/* ── Mobile responsiveness ─────────────────────────────────────── */
+
+/* Header: show the full prelim badge on wider screens, the compact pill on
+   phones so it never overflows next to the wordmark. */
+.ec-badge-compact {
+  display: none;
+}
+@media (max-width: 640px) {
+  .ec-badge-full {
+    display: none;
+  }
+  .ec-badge-compact {
+    display: inline-flex;
+  }
+  .ec-shell-pad {
+    padding-left: 16px !important;
+    padding-right: 16px !important;
+  }
+  .ec-header-pad {
+    padding: 12px 16px !important;
+  }
+}
+
+/* Hero search: on narrow phones let the pill wrap so the CTA drops to its own
+   full-width line under the input rather than squeezing it. */
+@media (max-width: 560px) {
+  .ec-search-row {
+    flex-wrap: wrap;
+    row-gap: 10px;
+  }
+  .ec-search-row > .ec-press:last-child {
+    width: 100%;
+  }
+}

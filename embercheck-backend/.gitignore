@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+server.log
+
+# Stored photo-assessment training-data records (photos + VLM reads + results).
+data_store/
+
+# VLM debug log.
+logs/

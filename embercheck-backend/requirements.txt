@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+httpx
+pydantic
+python-dotenv
+shapely>=2.0
+pyproj
+
+# Phase 1: persistence + consumer accounts (MongoDB via Beanie + PyMongo's
+# native async client, fastapi-users for auth). Pinned because these APIs shift
+# across versions. Beanie 2.x uses pymongo's AsyncMongoClient, not motor.
+fastapi-users[beanie]==15.0.5
+beanie==2.1.0
+pydantic-settings==2.14.1
