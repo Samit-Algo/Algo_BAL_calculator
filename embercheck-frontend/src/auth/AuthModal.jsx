@@ -32,7 +32,7 @@ const labelStyle = {
 }
 
 export default function AuthModal({ onSuccess, onCancel }) {
-  const { login, signup } = useAuth()
+  const { login, signup, loginWithGoogle } = useAuth()
   const [mode, setMode] = useState('login') // 'login' | 'signup'
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -40,6 +40,8 @@ export default function AuthModal({ onSuccess, onCancel }) {
   const [error, setError] = useState(null)
   const [submitting, setSubmitting] = useState(false)
   const emailRef = useRef(null)
+  const googleButtonRef = useRef(null)
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 
   // Focus the email field on open (mount).
   useEffect(() => {
@@ -55,6 +57,66 @@ export default function AuthModal({ onSuccess, onCancel }) {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [submitting, onCancel])
+
+  useEffect(() => {
+    if (!googleClientId || !googleButtonRef.current) return
+
+    let cancelled = false
+    async function loadGoogleIdentity() {
+      if (!window.google?.accounts?.id) {
+        await new Promise((resolve, reject) => {
+          const existing = document.querySelector('script[data-ec-google-identity]')
+          if (existing) {
+            existing.addEventListener('load', resolve, { once: true })
+            existing.addEventListener('error', reject, { once: true })
+            return
+          }
+          const script = document.createElement('script')
+          script.src = 'https://accounts.google.com/gsi/client'
+          script.async = true
+          script.defer = true
+          script.dataset.ecGoogleIdentity = 'true'
+          script.onload = resolve
+          script.onerror = reject
+          document.head.appendChild(script)
+        })
+      }
+      if (cancelled || !window.google?.accounts?.id || !googleButtonRef.current) return
+
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: async (response) => {
+          if (!response?.credential) return
+          setSubmitting(true)
+          setError(null)
+          try {
+            await loginWithGoogle(response.credential)
+            onSuccess()
+          } catch (err) {
+            setError(err.message || 'Google sign-in failed. Please try again.')
+          } finally {
+            setSubmitting(false)
+          }
+        },
+      })
+      googleButtonRef.current.innerHTML = ''
+      window.google.accounts.id.renderButton(googleButtonRef.current, {
+        type: 'standard',
+        theme: 'outline',
+        size: 'large',
+        text: 'continue_with',
+        shape: 'pill',
+        width: Math.min(368, googleButtonRef.current.clientWidth || 368),
+      })
+    }
+
+    loadGoogleIdentity().catch(() => {
+      if (!cancelled) setError('Google sign-in could not be loaded.')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [googleClientId, loginWithGoogle, onSuccess])
 
   function switchMode(next) {
     setMode(next)
@@ -160,7 +222,53 @@ export default function AuthModal({ onSuccess, onCancel }) {
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ marginTop: 22, display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ marginTop: 22 }}>
+          {googleClientId ? (
+            <div
+              ref={googleButtonRef}
+              aria-label="Continue with Google"
+              style={{ minHeight: 44, display: 'flex', justifyContent: 'center' }}
+            />
+          ) : (
+            <button
+              type="button"
+              disabled
+              style={{
+                width: '100%',
+                minHeight: 48,
+                borderRadius: 999,
+                border: '1px solid var(--line)',
+                background: 'var(--card)',
+                color: 'var(--ink-soft)',
+                fontFamily: 'var(--font-ui)',
+                fontSize: 15,
+                fontWeight: 700,
+              }}
+            >
+              Google sign-in not configured
+            </button>
+          )}
+        </div>
+
+        <div
+          style={{
+            margin: '18px 0',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            color: 'var(--ink-soft)',
+            fontSize: 12,
+            fontWeight: 700,
+            letterSpacing: '0.08em',
+            textTransform: 'uppercase',
+          }}
+        >
+          <span style={{ height: 1, flex: 1, background: 'var(--line)' }} />
+          <span>Email</span>
+          <span style={{ height: 1, flex: 1, background: 'var(--line)' }} />
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           {isSignup && (
             <div>
               <label htmlFor="ec-auth-name" style={labelStyle}>

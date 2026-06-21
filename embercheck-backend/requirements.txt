@@ -5,6 +5,7 @@ pydantic
 python-dotenv
 shapely>=2.0
 pyproj
+requests
 
 # Phase 1: persistence + consumer accounts (MongoDB via Beanie + PyMongo's
 # native async client, fastapi-users for auth). Pinned because these APIs shift
@@ -12,3 +13,4 @@ pyproj
 fastapi-users[beanie]==15.0.5
 beanie==2.1.0
 pydantic-settings==2.14.1
+google-auth==2.43.0

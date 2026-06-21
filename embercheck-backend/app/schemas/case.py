@@ -9,7 +9,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from app.cases.service import governing_vegetation
-from app.models.case import CasePhoto, CaseStatus, PropertyInfo
+from app.models.case import CasePhoto, CaseStatus, PropertyInfo, SectorEvidence
 
 
 class CaseCreateRequest(BaseModel):
@@ -32,6 +32,28 @@ class CaseCreateRequest(BaseModel):
     # Same optional overrides /assess accepts.
     fire_danger_override: int | None = None
     slope_override: float | None = None
+
+
+class SectorOverrideRequest(BaseModel):
+    """Set a per-side override: vegetation class, distance, and/or slope.
+    Fields are independent and merge onto any existing override - send only
+    the ones you're changing, the rest are left as previously set.
+
+    vegetation_class follows the surface-aware raise-only rule (see
+    reconcile_sector_bal). distance_m / slope are full self-report with no
+    guard - they replace the GIS-measured value outright, same as the
+    point-mode photo-analysis "adjust the inputs" page.
+
+    slope_direction: "downslope" | "upslope" | "flat". AS 3959 only the
+    downslope angle counts; upslope/flat both band as 0 degrees - the caller
+    should already resolve effective_slope_degrees accordingly (0 unless
+    downslope) before sending, matching the point-mode UI's own logic.
+    """
+
+    vegetation_class: str | None = None
+    distance_m: float | None = None
+    effective_slope_degrees: float | None = None
+    slope_direction: str | None = None
 
 
 class BoundaryUpdateRequest(BaseModel):
@@ -63,6 +85,7 @@ class CaseRead(BaseModel):
     # "Woodland"), so the detail view doesn't show the top-level "Not classified".
     governing_vegetation: str | None = None
     photos: list[CasePhoto] = []
+    sector_evidence: list[SectorEvidence] | None = None
     created_at: datetime
     updated_at: datetime
     submitted_at: datetime | None = None
@@ -79,6 +102,7 @@ class CaseRead(BaseModel):
             governing_direction=case.governing_direction,
             governing_vegetation=governing_vegetation(case),
             photos=case.photos,
+            sector_evidence=case.sector_evidence,
             created_at=case.created_at,
             updated_at=case.updated_at,
             submitted_at=case.submitted_at,

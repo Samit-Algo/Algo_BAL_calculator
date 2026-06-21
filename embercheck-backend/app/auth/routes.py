@@ -12,6 +12,8 @@ from datetime import datetime, timedelta, timezone
 from beanie import PydanticObjectId
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
+from google.auth.transport import requests as google_requests
+from google.oauth2 import id_token as google_id_token
 from pydantic import BaseModel, EmailStr
 
 from app.auth.backend import (
@@ -40,6 +42,10 @@ class RefreshRequest(BaseModel):
 
 class LogoutRequest(BaseModel):
     refresh_token: str
+
+
+class GoogleLoginRequest(BaseModel):
+    id_token: str
 
 
 class TokenResponse(BaseModel):
@@ -74,6 +80,42 @@ async def _issue_refresh_token(user_id: PydanticObjectId) -> str:
     return raw
 
 
+def _require_google_client_id() -> str:
+    client_id = settings.GOOGLE_CLIENT_ID.strip()
+    if not client_id:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GOOGLE_AUTH_NOT_CONFIGURED",
+        )
+    return client_id
+
+
+def _verify_google_id_token(token: str) -> dict:
+    try:
+        payload = google_id_token.verify_oauth2_token(
+            token,
+            google_requests.Request(),
+            _require_google_client_id(),
+        )
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="INVALID_GOOGLE_TOKEN",
+        )
+
+    if not payload.get("sub") or not payload.get("email"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="INVALID_GOOGLE_TOKEN",
+        )
+    if payload.get("email_verified") is False:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="GOOGLE_EMAIL_NOT_VERIFIED",
+        )
+    return payload
+
+
 # ---- custom auth endpoints (login / refresh / logout) ------------------------
 
 custom_auth_router = APIRouter(prefix="/auth", tags=["auth"])
@@ -92,6 +134,65 @@ async def login(
     )
     user = await user_manager.authenticate(form)
     if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="LOGIN_BAD_CREDENTIALS"
+        )
+
+    access_token = await get_jwt_strategy().write_token(user)
+    refresh_token = await _issue_refresh_token(user.id)
+    return TokenResponse(access_token=access_token, refresh_token=refresh_token)
+
+
+@custom_auth_router.post("/google", response_model=TokenResponse)
+async def google_login(
+    body: GoogleLoginRequest,
+    user_manager: UserManager = Depends(get_user_manager),
+):
+    """Exchange a Google ID token for EmberCheck application tokens.
+
+    Google proves identity only; EmberCheck still issues its own JWT access
+    token and DB-backed refresh token. Google access tokens are never accepted
+    or stored as application sessions.
+    """
+    payload = _verify_google_id_token(body.id_token)
+    google_id = payload["sub"]
+    email = payload["email"].lower()
+    display_name = payload.get("name") or payload.get("given_name")
+    now = datetime.now(timezone.utc)
+
+    user = await User.find_one(User.google_id == google_id)
+    if user is None:
+        user = await User.find_one(User.email == email)
+
+    if user is None:
+        random_password = secrets.token_urlsafe(48)
+        user = await user_manager.create(
+            UserCreate(
+                email=email,
+                password=random_password,
+                name=display_name,
+            ),
+            safe=True,
+        )
+
+    changed = False
+    if user.google_id != google_id:
+        user.google_id = google_id
+        changed = True
+    if user.auth_provider != "google":
+        user.auth_provider = "google"
+        changed = True
+    if display_name and user.name != display_name:
+        user.name = display_name
+        changed = True
+    if not user.is_verified:
+        user.is_verified = True
+        changed = True
+    if changed:
+        user.updated_at = now
+        await user.save()
+
+    if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="LOGIN_BAD_CREDENTIALS"
         )

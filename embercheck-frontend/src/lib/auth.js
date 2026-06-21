@@ -92,6 +92,11 @@ function messageForDetail(detail, status) {
       return 'An account with this email already exists.'
     case 'REGISTER_INVALID_PASSWORD':
       return reason || 'Password must be at least 8 characters.'
+    case 'GOOGLE_AUTH_NOT_CONFIGURED':
+      return 'Google sign-in is not configured yet.'
+    case 'INVALID_GOOGLE_TOKEN':
+    case 'GOOGLE_EMAIL_NOT_VERIFIED':
+      return 'Google sign-in could not be verified.'
     default:
       if (status === 422) return 'Please enter a valid email and password.'
       return 'Something went wrong. Please try again.'
@@ -116,6 +121,11 @@ let refreshInFlight = null // a single shared refresh promise for concurrent 401
 
 function buildHeaders(extra, withAuth) {
   const headers = { 'Content-Type': 'application/json', ...(extra || {}) }
+  // Allow callers to omit Content-Type (e.g. for FormData uploads where the
+  // browser must set the multipart boundary automatically).
+  for (const key of Object.keys(headers)) {
+    if (headers[key] === undefined) delete headers[key]
+  }
   if (withAuth && accessToken) headers.Authorization = `Bearer ${accessToken}`
   return headers
 }
@@ -202,6 +212,15 @@ export async function register(email, password, name) {
 // Log in; stores the rotated access + refresh pair. Returns the token payload.
 export async function login(email, password) {
   const response = await authPost('/auth/login', { email, password })
+  if (!response.ok) throw await errorFromResponse(response)
+  const tokens = await response.json()
+  setTokens(tokens)
+  return tokens
+}
+
+// Exchange a Google Identity Services ID token for EmberCheck app tokens.
+export async function loginWithGoogle(idToken) {
+  const response = await authPost('/auth/google', { id_token: idToken })
   if (!response.ok) throw await errorFromResponse(response)
   const tokens = await response.json()
   setTokens(tokens)

@@ -5,8 +5,8 @@
 # is_active, is_superuser and is_verified; Beanie's Document gives it the
 # PydanticObjectId `id`. We only add EmberCheck-specific profile fields here.
 #
-# Step 1 deliberately stops at the model + the get_user_db dependency. The
-# UserManager, auth backends and routers are Step 2 (see the TODO below).
+# Step 1 deliberately stopped at the model + the get_user_db dependency. The
+# UserManager, auth backends and routers are now wired, including Google OAuth.
 
 from datetime import datetime, timezone
 
@@ -21,7 +21,8 @@ class User(BeanieBaseUser, Document):
 
     name: str | None = None
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    auth_provider: str = "local"  # "local" (email/password) or "google" (later)
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    auth_provider: str = "local"  # "local" (email/password) or "google"
     google_id: str | None = None
 
     class Settings(BeanieBaseUser.Settings):
@@ -36,7 +37,5 @@ async def get_user_db():
     yield BeanieUserDatabase(User)
 
 
-# Step 2 (done): the UserManager lives in app/auth/manager.py, the JWT access
-# backend in app/auth/backend.py, and the routers (register / login / refresh /
-# logout / users-me) in app/auth/routes.py. Google/OAuth (auth_provider="google",
-# google_id) is still a later step.
+# The UserManager lives in app/auth/manager.py, the JWT access backend in
+# app/auth/backend.py, and auth routes in app/auth/routes.py.

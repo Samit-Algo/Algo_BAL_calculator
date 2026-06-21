@@ -3,9 +3,10 @@
 // implied — it's the user's own cases (the auth'd GET /cases drives it).
 
 import { useEffect, useState } from 'react'
-import { listCases } from '../lib/cases'
+import { deleteCase, listCases } from '../lib/cases'
 import { balColor } from '../lib/bal'
 import ECButton from './ui/ECButton'
+import ConfirmModal from './ui/ConfirmModal'
 import Glyph from './ui/Glyph'
 import StatusPill from './ui/StatusPill'
 
@@ -37,63 +38,112 @@ function BalChip({ rating }) {
   )
 }
 
-function CaseCard({ case_, onOpen }) {
+function CaseCard({ case_, onOpen, onDelete }) {
+  // The card itself is the (large) open button; the delete control is a sibling
+  // overlay (a button can't be nested inside another button). It sits in the
+  // bottom-right corner, clear of the "Updated …" text on the left.
   return (
-    <button
-      type="button"
-      className="ec-press"
-      onClick={() => onOpen(case_.id)}
-      style={{
-        display: 'block',
-        width: '100%',
-        textAlign: 'left',
-        cursor: 'pointer',
-        background: 'var(--card)',
-        border: '1px solid var(--line)',
-        borderRadius: 18,
-        padding: 18,
-        boxShadow: '0 4px 16px rgba(40,36,24,0.06)',
-        fontFamily: 'var(--font-ui)',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
-        <BalChip rating={case_.bal_rating} />
-        <StatusPill status={case_.status} />
-      </div>
-      <div
+    <div style={{ position: 'relative' }}>
+      <button
+        type="button"
+        className="ec-press"
+        onClick={() => onOpen(case_.id)}
         style={{
-          fontFamily: 'var(--font-display)',
-          fontWeight: 700,
-          fontSize: 17,
-          lineHeight: 1.25,
-          color: 'var(--ink)',
-          marginBottom: 8,
-          textWrap: 'pretty',
+          display: 'block',
+          width: '100%',
+          textAlign: 'left',
+          cursor: 'pointer',
+          background: 'var(--card)',
+          border: '1px solid var(--line)',
+          borderRadius: 18,
+          padding: 18,
+          boxShadow: '0 4px 16px rgba(40,36,24,0.06)',
+          fontFamily: 'var(--font-ui)',
         }}
       >
-        {case_.address}
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-soft)' }}>
-        <span style={{ display: 'inline-flex', color: 'var(--euc-deep)' }}>
-          <Glyph name="locate" size={15} />
-        </span>
-        <span>
-          {case_.governing_vegetation || 'No hazardous vegetation'}
-          {case_.governing_direction ? ` · ${case_.governing_direction}` : ''}
-        </span>
-      </div>
-      <div style={{ marginTop: 10, fontSize: 12, color: 'var(--ink-soft)' }}>
-        Updated {formatDate(case_.updated_at)}
-      </div>
-    </button>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+          <BalChip rating={case_.bal_rating} />
+          <StatusPill status={case_.status} />
+        </div>
+        <div
+          style={{
+            fontFamily: 'var(--font-display)',
+            fontWeight: 700,
+            fontSize: 17,
+            lineHeight: 1.25,
+            color: 'var(--ink)',
+            marginBottom: 8,
+            textWrap: 'pretty',
+          }}
+        >
+          {case_.address}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink-soft)' }}>
+          <span style={{ display: 'inline-flex', color: 'var(--euc-deep)' }}>
+            <Glyph name="locate" size={15} />
+          </span>
+          <span>
+            {case_.governing_vegetation || 'No hazardous vegetation'}
+            {case_.governing_direction ? ` · ${case_.governing_direction}` : ''}
+          </span>
+        </div>
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--ink-soft)' }}>
+          Updated {formatDate(case_.updated_at)}
+        </div>
+      </button>
+
+      <button
+        type="button"
+        className="ec-tip"
+        data-tip="Delete property"
+        aria-label={`Delete ${case_.address}`}
+        onClick={(e) => {
+          e.stopPropagation()
+          onDelete(case_)
+        }}
+        style={{
+          position: 'absolute',
+          bottom: 12,
+          right: 12,
+          width: 30,
+          height: 30,
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
+          borderRadius: 8,
+          border: '1px solid color-mix(in oklab, #b3402c 28%, var(--line))',
+          background: 'var(--card)',
+          color: 'color-mix(in oklab, #b3402c 70%, transparent)',
+          cursor: 'pointer',
+        }}
+      >
+        <Glyph name="trash" size={16} />
+      </button>
+    </div>
   )
 }
 
-export default function Dashboard({ onOpenCase, onNewAssessment }) {
+export default function Dashboard({ onOpenCase, onNewAssessment, onCaseDeleted }) {
   const [cases, setCases] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [reloadKey, setReloadKey] = useState(0)
+  // The property pending delete-confirmation, or null. Drives the ConfirmModal.
+  const [pendingDelete, setPendingDelete] = useState(null)
+
+  // Confirmed delete: DELETE the case, then drop it from the list on success
+  // (optimistic-after-success — no refetch). Returning the promise lets the
+  // ConfirmModal show its pending state; a rejection surfaces in the modal and
+  // the row stays. Tell the parent so it can clear a now-dangling active session.
+  async function handleConfirmDelete() {
+    const target = pendingDelete
+    if (!target) return
+    await deleteCase(target.id)
+    setCases((prev) => (prev ? prev.filter((c) => c.id !== target.id) : prev))
+    onCaseDeleted?.(target.id)
+    setPendingDelete(null)
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -183,7 +233,7 @@ export default function Dashboard({ onOpenCase, onNewAssessment }) {
           }}
         >
           {cases.map((c) => (
-            <CaseCard key={c.id} case_={c} onOpen={onOpenCase} />
+            <CaseCard key={c.id} case_={c} onOpen={onOpenCase} onDelete={setPendingDelete} />
           ))}
         </div>
       ) : (
@@ -219,6 +269,21 @@ export default function Dashboard({ onOpenCase, onNewAssessment }) {
           </ECButton>
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={pendingDelete != null}
+        tone="danger"
+        title="Delete this property?"
+        message={
+          pendingDelete
+            ? `This permanently removes “${pendingDelete.address}” and any photos you've added. This can't be undone.`
+            : ''
+        }
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   )
 }

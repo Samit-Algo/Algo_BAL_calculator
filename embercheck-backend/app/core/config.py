@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # here now so the config surface is settled before the auth code lands.
     AUTH_SECRET: str = ""
 
+    # Google OAuth 2.0 client ID used to verify frontend Google ID tokens. This
+    # must match VITE_GOOGLE_CLIENT_ID in the frontend.
+    GOOGLE_CLIENT_ID: str = ""
+
     # Token lifetimes (seconds). Access token short-lived; refresh token long.
     ACCESS_TOKEN_LIFETIME_SECONDS: int = 3600  # 1 hour
     REFRESH_TOKEN_LIFETIME_SECONDS: int = 2592000  # 30 days

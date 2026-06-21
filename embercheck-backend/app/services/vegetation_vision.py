@@ -66,6 +66,7 @@ def _fallback(direction: str, reason: str) -> dict:
         "confidence": 0.0,
         "condition": None,
         "limits": reason,
+        "reasoning": None,
     }
 
 
@@ -87,8 +88,18 @@ _SYSTEM_PROMPT = (
     "- Mallee/Heath: multi-stemmed mallee eucalypts, or low heath shrubs under ~2 m.\n"
     "- Rainforest: closed, dense, broad-leaved moist canopy, little understorey.\n"
     "- Grassland: grasses dominate, no significant trees or shrubs.\n"
-    "- low_risk: managed lawn, crop, bare ground, water, or built surfaces - no real fuel.\n"
-    "- cant_tell: too dark / blurry / obstructed, or no useful vegetation.\n\n"
+    "- low_risk: managed lawn, crop, bare ground, water, or built surfaces - no real "
+    "fuel. Use this whenever you can see the scene CLEARLY and there is confidently NO "
+    "vegetation fuel - this INCLUDES a photo that isn't of the property at all (an "
+    "advertisement, a screenshot, an indoor shot, a person, a vehicle, signage, "
+    "equipment, etc.) as long as you can tell there is no vegetation hazard in it.\n"
+    "- cant_tell: ONLY when the image quality itself stops you judging - too dark, too "
+    "blurry, or the frame is mostly obstructed (e.g. a thumb over the lens, fog, "
+    "extreme close-up of an unrelated surface) - so vegetation MIGHT be present but you "
+    "genuinely cannot see well enough to say. Do NOT use cant_tell just because the "
+    "photo shows no vegetation - that is low_risk, not cant_tell. cant_tell means "
+    "'this photo could be hiding vegetation behind a quality problem', not 'this photo "
+    "clearly has none.'\n\n"
     "Forest vs Woodland is the key call: if the tree crowns form a mostly "
     "continuous canopy, choose Forest; only choose Woodland when crowns are "
     "clearly separated with open sky between them.\n\n"
@@ -178,12 +189,13 @@ async def read_vegetation(image_data_url: str, direction: str) -> dict:
 
     result = _normalise(parsed, direction)
     _log.info(
-        "PARSED direction=%s class=%s confidence=%s condition=%s limits=%s",
+        "PARSED direction=%s class=%s confidence=%s condition=%s limits=%s reasoning=%s",
         direction,
         result["class"],
         result["confidence"],
         result["condition"],
         result["limits"],
+        result["reasoning"],
     )
     return result
 
@@ -211,6 +223,7 @@ def _normalise(parsed: dict, direction: str) -> dict:
         "confidence": confidence,
         "condition": parsed.get("condition"),
         "limits": parsed.get("limits"),
+        "reasoning": parsed.get("reasoning"),
     }
 
 

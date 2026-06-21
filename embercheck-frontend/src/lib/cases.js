@@ -86,6 +86,121 @@ export async function getCasePhotoURL(caseId, direction) {
   }
 }
 
+// Upload one or more photos for a compass side on a case. Accepts an array of
+// File objects. Returns the updated SectorEvidence for that side.
+export async function uploadSectorPhotos(caseId, compassSide, files) {
+  const formData = new FormData()
+  for (const file of files) formData.append('files', file)
+
+  let response
+  try {
+    response = await apiFetch(
+      `/cases/${caseId}/sectors/${encodeURIComponent(compassSide)}/photos`,
+      { method: 'POST', body: formData, headers: { 'Content-Type': undefined } },
+    )
+  } catch {
+    throw new Error('We couldn’t upload your photos. Please try again.')
+  }
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Please log in to continue.')
+    if (response.status === 413) throw new Error('Image is too large (max 10 MB).')
+    if (response.status === 422) {
+      const detail = await response.json().then(j => j.detail).catch(() => null)
+      throw new Error(detail || 'Invalid file. Please upload a JPEG or PNG image.')
+    }
+    throw new Error('We couldn’t upload your photos. Please try again.')
+  }
+  return response.json()
+}
+
+// Fetch a stored sector photo and return an object URL for <img src>.
+// photoRef can be a photo_id (uuid hex) or a 0-based integer index.
+export async function getSectorPhotoURL(caseId, compassSide, photoRef) {
+  const url = `/cases/${caseId}/sectors/${encodeURIComponent(compassSide)}/photos/${encodeURIComponent(photoRef)}`
+  try {
+    const response = await apiFetch(url)
+    if (!response.ok) return null
+    const blob = await response.blob()
+    return URL.createObjectURL(blob)
+  } catch {
+    return null
+  }
+}
+
+// Delete a sector photo by photo_id. Returns the updated side evidence.
+export async function deleteSectorPhoto(caseId, compassSide, photoId) {
+  const url = `/cases/${caseId}/sectors/${encodeURIComponent(compassSide)}/photos/${encodeURIComponent(photoId)}`
+  let response
+  try {
+    response = await apiFetch(url, { method: 'DELETE' })
+  } catch {
+    throw new Error('Could not delete the photo. Please try again.')
+  }
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Please log in to continue.')
+    if (response.status === 404) throw new Error('Photo not found.')
+    throw new Error('Could not delete the photo. Please try again.')
+  }
+  return response.json()
+}
+
+// Set/merge a per-side override (vegetation_class, distance_m,
+// effective_slope_degrees, slope_direction). Send only the fields you're
+// changing - others keep their previous value. Returns
+// { compass_side, overrides, combined_classification, review_flags, final_bal }.
+export async function setSectorOverride(caseId, compassSide, fields) {
+  const url = `/cases/${caseId}/sectors/${encodeURIComponent(compassSide)}/override`
+  let response
+  try {
+    response = await apiFetch(url, { method: 'PUT', body: JSON.stringify(fields) })
+  } catch {
+    throw new Error('We couldn’t save your override. Please try again.')
+  }
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Please log in to continue.')
+    if (response.status === 422) {
+      const detail = await response.json().then(j => j.detail).catch(() => null)
+      throw new Error(detail || 'Invalid override value.')
+    }
+    throw new Error('We couldn’t save your override. Please try again.')
+  }
+  return response.json()
+}
+
+// Reset a side's override back to photo-combined (if photos exist) else the
+// GIS draft. Same response shape as setSectorOverride.
+export async function clearSectorOverride(caseId, compassSide) {
+  const url = `/cases/${caseId}/sectors/${encodeURIComponent(compassSide)}/override`
+  let response
+  try {
+    response = await apiFetch(url, { method: 'DELETE' })
+  } catch {
+    throw new Error('We couldn’t reset this side. Please try again.')
+  }
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Please log in to continue.')
+    throw new Error('We couldn’t reset this side. Please try again.')
+  }
+  return response.json()
+}
+
+// Delete one of the caller's own cases (and its photos on the server). The
+// backend ownership-checks and returns 204 on success. Throws a friendly Error
+// otherwise (404 = already gone / not yours).
+export async function deleteCase(caseId) {
+  let response
+  try {
+    response = await apiFetch(`/cases/${caseId}`, { method: 'DELETE' })
+  } catch {
+    throw new Error('We couldn’t reach the server. Please try again.')
+  }
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Please log in to continue.')
+    if (response.status === 404) throw new Error('That property no longer exists.')
+    throw new Error('We couldn’t delete this property. Please try again.')
+  }
+}
+
 // The caller's cases, newest first (CaseSummary[]) for the dashboard.
 export async function listCases() {
   let response

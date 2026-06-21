@@ -11,6 +11,7 @@
 
 from app.config import settings
 from app.models.assessment import AssessmentRequest
+from app.models.case import SectorEvidence
 from app.services.address_lookup import geocode_address, AddressNotFoundError
 from app.services.lga_lookup import get_lga_name, LgaNotFoundError
 from app.services.fire_danger import get_fire_danger_index
@@ -20,6 +21,7 @@ from app.services.vegetation_scan import find_nearest_vegetation, DIRECTIONS
 from app.services.slope_analyzer import calculate_slope, ElevationServiceError
 from app.services.bal_calculator import calculate_bal
 from app.services.photo_class_mapper import map_photo_class_to_pbp
+from app.services.sector_classifier import CLASS_SEVERITY as VEG_SEVERITY
 
 
 # BAL ratings from least to most severe. Used to pick the worst side, which
@@ -153,6 +155,326 @@ def resolve_side_bal(
     }
 
 
+def _band_class_against_side(
+    *, veg_class: str, side_transect: dict, fdi: int, slope_deg: float,
+    distance_m: float | None, veg_found: bool,
+) -> tuple[str, bool]:
+    """Band one vegetation class against this side's real distance (if
+    vegetation_found) else candidate geometry. Returns (bal_rating_or_
+    'review_required_unassessable', used_candidate). Shared by the photo-raise
+    path and the override-raise path so both band identically."""
+    mapping = map_photo_class_to_pbp(veg_class)
+    pbp_override = mapping["pbp_formation"] if mapping["override"] else None
+
+    if veg_found:
+        bal = calculate_bal(
+            fdi=fdi, veg_form="", effective_slope_degrees=slope_deg,
+            distance_m=distance_m, vegetation_found=True,
+            as3959_class=veg_class, pbp_formation_override=pbp_override,
+        )
+        return bal["bal_rating"], False
+
+    # No real hazard on this side - try candidate geometry (never fabricate
+    # a distance; never produce a false-low when asserting a hazard exists).
+    cand_dist = side_transect.get("candidate_distance_m")
+    cand_slope = side_transect.get("candidate_effective_slope_degrees")
+    if cand_dist is None:
+        return "review_required_unassessable", True
+
+    bal = calculate_bal(
+        fdi=fdi, veg_form="", effective_slope_degrees=cand_slope if cand_slope is not None else 0.0,
+        distance_m=cand_dist, vegetation_found=True,
+        as3959_class=veg_class, pbp_formation_override=pbp_override,
+    )
+    return bal["bal_rating"], True
+
+
+def reconcile_sector_bal(
+    *,
+    sector_ev: SectorEvidence,
+    side_transect: dict,
+    fdi: int,
+    surface: str = "consumer",
+) -> None:
+    """Reconcile one side's GIS draft + photo combined_classification +
+    assessor/consumer override and compute the final_bal. Mutates sector_ev
+    in place (final_bal + review_flags). Pure except for the mutation.
+
+    Precedence: effective class = override (if set) else combined-photos
+    else GIS draft. surface="consumer": an override may only RAISE relative
+    to what the photos/draft would already produce - a less-hazardous
+    override is recorded but never lowers final_bal (flagged for review).
+    surface="console": full reconciliation, lower-with-flag allowed (same
+    rule the photo-vs-draft comparison already uses below).
+
+    Implementation note: the override comparison is a layer ON TOP of the
+    existing combined-vs-draft logic, not a rewrite of it - the no-override
+    path below is therefore unchanged (anchor-safe by construction).
+    """
+    draft = sector_ev.gis_draft_classification
+    combined = sector_ev.combined_classification
+    overrides = sector_ev.overrides
+    override = overrides.vegetation_class if overrides else None
+    override_distance = overrides.distance_m if overrides else None
+    override_slope = overrides.effective_slope_degrees if overrides else None
+
+    flags: list[str] = list(sector_ev.review_flags or [])
+
+    # The class the side would use with NO override - this is what the
+    # override gets compared against (per the spec's precedence rule).
+    pre_override_class = combined if combined else draft
+
+    # The boundary pipeline's per_direction record uses "distance_m" /
+    # "vegetation_class" (NOT "nearest_distance_m" / "nearest_as3959_class" -
+    # those are the raw vegetation_scan.py field names, already renamed by the
+    # time the record lands in boundary_assessment.per_direction).
+    veg_found = side_transect.get("vegetation_found", False)
+    distance_m = side_transect.get("distance_m")
+    slope_deg = side_transect.get("effective_slope_degrees", 0.0)
+    # The "keep unchanged" paths reuse this side's already-computed bal_rating
+    # verbatim - provably byte-identical, and skips the vegForm bridge (which
+    # needs the raw SVTM form string this record doesn't carry).
+    base_bal_rating = side_transect.get("bal_rating")
+
+    # Distance/slope override: full self-report, no guard (point-mode parity).
+    # Replaces the GIS-measured geometry outright. Setting a distance asserts
+    # vegetation exists at it (you can't have "distance to vegetation"
+    # without vegetation), so it also forces veg_found=True. Because this
+    # changes the geometry the "keep unchanged" paths verbatim-reuse, the
+    # baseline bal_rating must be recomputed against whatever class would
+    # otherwise apply (pre_override_class) at the new geometry.
+    has_geometry_override = override_distance is not None or override_slope is not None
+    if has_geometry_override:
+        if override_distance is not None:
+            distance_m = override_distance
+            veg_found = True
+        if override_slope is not None:
+            slope_deg = override_slope
+        if pre_override_class:
+            mapping = map_photo_class_to_pbp(pre_override_class)
+            pbp_o = mapping["pbp_formation"] if mapping["override"] else None
+            bal = calculate_bal(
+                fdi=fdi, veg_form="", effective_slope_degrees=slope_deg,
+                distance_m=distance_m, vegetation_found=veg_found,
+                as3959_class=pre_override_class, pbp_formation_override=pbp_o,
+            )
+            base_bal_rating = bal["bal_rating"]
+        else:
+            base_bal_rating = "BAL-LOW"
+        if "geometry_overridden" not in flags:
+            flags.append("geometry_overridden")
+
+    pre_final_bal, flags = _reconcile_combined_vs_draft(
+        draft=draft, combined=combined, base_bal_rating=base_bal_rating,
+        veg_found=veg_found, distance_m=distance_m, slope_deg=slope_deg,
+        side_transect=side_transect, fdi=fdi, surface=surface, flags=flags,
+    )
+
+    if not override:
+        sector_ev.final_bal = pre_final_bal
+        sector_ev.review_flags = flags
+        return
+
+    pre_sev = VEG_SEVERITY.get(pre_override_class, -1) if pre_override_class else -1
+    override_sev = VEG_SEVERITY.get(override, 8)
+
+    if override_sev > pre_sev:
+        # Override MORE hazardous than what photos/draft would already give ->
+        # RAISE. Same banding rule as the photo-raise path: real distance if
+        # this side has hazardous vegetation, else candidate geometry, else
+        # unassessable (never fabricate a distance, never a false-low).
+        bal_rating, _used_candidate = _band_class_against_side(
+            veg_class=override, side_transect=side_transect, fdi=fdi,
+            slope_deg=slope_deg, distance_m=distance_m, veg_found=veg_found,
+        )
+        if bal_rating == "review_required_unassessable":
+            if "override_vegetation_no_distance_review" not in flags:
+                flags.append("override_vegetation_no_distance_review")
+        sector_ev.final_bal = bal_rating
+        sector_ev.review_flags = flags
+        return
+
+    if override_sev < pre_sev:
+        # Override LESS hazardous -> keep the higher of (photos/draft);
+        # never lower on the consumer surface. Flag for review either way -
+        # an assessor should confirm a downgrade even on console.
+        if "override_lower_than_draft_review" not in flags:
+            flags.append("override_lower_than_draft_review")
+        sector_ev.final_bal = pre_final_bal
+        sector_ev.review_flags = flags
+        return
+
+    # Equal severity -> no functional change from the override.
+    sector_ev.final_bal = pre_final_bal
+    sector_ev.review_flags = flags
+
+
+def _reconcile_combined_vs_draft(
+    *, draft, combined, base_bal_rating, veg_found, distance_m, slope_deg,
+    side_transect, fdi, surface, flags,
+) -> tuple[str, list[str]]:
+    """The pre-override combined-vs-draft reconciliation (unchanged from
+    before overrides existed). Returns (final_bal, review_flags) instead of
+    mutating, so reconcile_sector_bal can layer an override on top."""
+    flags = list(flags)
+
+    if not combined:
+        # No photos / no combined -> use GIS draft unchanged (verbatim).
+        return base_bal_rating, flags
+
+    draft_sev = VEG_SEVERITY.get(draft, -1) if draft else -1
+    combined_sev = VEG_SEVERITY.get(combined, 8)
+
+    # Draft is None (GIS saw no hazard) but photos show vegetation.
+    if draft is None or draft_sev < 0:
+        if combined_sev <= 0:
+            # Photos say Excluded too — no change.
+            return base_bal_rating, flags
+
+        # A distance/slope override forces veg_found=True with a real
+        # distance - band directly against it, skipping candidate geometry
+        # (the override already supplies what candidate geometry exists for).
+        if veg_found:
+            mapping = map_photo_class_to_pbp(combined)
+            pbp_override = mapping["pbp_formation"] if mapping["override"] else None
+            bal = calculate_bal(
+                fdi=fdi, veg_form="", effective_slope_degrees=slope_deg,
+                distance_m=distance_m, vegetation_found=True,
+                as3959_class=combined, pbp_formation_override=pbp_override,
+            )
+            return bal["bal_rating"], flags
+
+        # Photos show vegetation the map didn't — reclassify using candidate
+        # geometry if available.
+        cand_dist = side_transect.get("candidate_distance_m")
+        cand_slope = side_transect.get("candidate_effective_slope_degrees")
+
+        if cand_dist is None:
+            # No candidate geometry — can't measure distance. Unassessable.
+            if "photo_vegetation_no_distance_review" not in flags:
+                flags.append("photo_vegetation_no_distance_review")
+            return "review_required_unassessable", flags
+
+        # Band from the candidate geometry + the photo's vegetation class.
+        mapping = map_photo_class_to_pbp(combined)
+        pbp_override = mapping["pbp_formation"] if mapping["override"] else None
+        bal = calculate_bal(
+            fdi=fdi,
+            veg_form="",  # ignored - pbp_formation_override drives this.
+            effective_slope_degrees=cand_slope if cand_slope is not None else 0.0,
+            distance_m=cand_dist,
+            vegetation_found=True,
+            as3959_class=combined,
+            pbp_formation_override=pbp_override,
+        )
+        if "photo_found_unmapped_vegetation" not in flags:
+            flags.append("photo_found_unmapped_vegetation")
+        return bal["bal_rating"], flags
+
+    # Both draft and combined exist — compare severity.
+    if combined_sev > draft_sev:
+        # Combined MORE hazardous -> RAISE. Both surfaces.
+        mapping = map_photo_class_to_pbp(combined)
+        pbp_override = mapping["pbp_formation"] if mapping["override"] else None
+        bal = calculate_bal(
+            fdi=fdi, veg_form="", effective_slope_degrees=slope_deg,
+            distance_m=distance_m, vegetation_found=veg_found,
+            as3959_class=combined,
+            pbp_formation_override=pbp_override,
+        )
+        return bal["bal_rating"], flags
+
+    if combined_sev == draft_sev:
+        # Same severity -> keep draft BAL (verbatim - no recompute needed).
+        return base_bal_rating, flags
+
+    # Combined LESS hazardous than draft.
+    if surface == "consumer":
+        # Consumer: keep draft, never lower. Flag for review.
+        if "photo_lower_than_draft_review" not in flags:
+            flags.append("photo_lower_than_draft_review")
+        return base_bal_rating, flags
+
+    # Console: use combined (lower), flag.
+    mapping = map_photo_class_to_pbp(combined)
+    pbp_override = mapping["pbp_formation"] if mapping["override"] else None
+    bal = calculate_bal(
+        fdi=fdi, veg_form="", effective_slope_degrees=slope_deg,
+        distance_m=distance_m, vegetation_found=veg_found,
+        as3959_class=combined,
+        pbp_formation_override=pbp_override,
+    )
+    if "lowered_requires_review" not in flags:
+        flags.append("lowered_requires_review")
+    return bal["bal_rating"], flags
+
+
+def reconcile_all_sectors(
+    sector_evidence: list[SectorEvidence],
+    boundary_assessment: dict,
+    surface: str = "consumer",
+) -> str | None:
+    """Reconcile all sides and return the headline BAL (worst final_bal across
+    sides). When a side has no photos, final_bal == its existing GIS BAL, so the
+    headline is unchanged from the pre-photo state.
+
+    Returns the headline BAL rating string, or None if no sector evidence.
+    """
+    if not sector_evidence or not boundary_assessment:
+        return None
+
+    per_direction = boundary_assessment.get("per_direction") or []
+    fdi = boundary_assessment.get("fire_danger_index", 100)
+
+    # Build a lookup: for each compass side, find the governing transect.
+    from app.cases.service import COMPASS_SIDES
+    side_governing: dict[str, dict | None] = {s: None for s in COMPASS_SIDES}
+    for transect in per_direction:
+        side = transect.get("outward_direction") or transect.get("direction")
+        if side not in side_governing:
+            continue
+        best = side_governing[side]
+        if best is None or _transect_severity(transect) > _transect_severity(best):
+            side_governing[side] = transect
+
+    for ev in sector_evidence:
+        governing_transect = side_governing.get(ev.compass_side)
+        if governing_transect is None:
+            # No transect at all for this side - matches calculate_bal's Rule A
+            # (no hazardous vegetation -> BAL-LOW), so the "keep unchanged"
+            # paths that reuse bal_rating verbatim still resolve correctly.
+            governing_transect = {
+                "vegetation_found": False,
+                "distance_m": None,
+                "effective_slope_degrees": 0.0,
+                "vegetation_class": None,
+                "pbp_formation": None,
+                "bal_rating": "BAL-LOW",
+                "candidate_distance_m": None,
+            }
+        reconcile_sector_bal(
+            sector_ev=ev,
+            side_transect=governing_transect,
+            fdi=fdi,
+            surface=surface,
+        )
+
+    # Headline: worst final_bal across sides. Sides with
+    # "review_required_unassessable" are NOT treated as a numeric BAL —
+    # they need review, so they don't contribute to headline lowering.
+    rated = [
+        ev for ev in sector_evidence
+        if ev.final_bal and ev.final_bal in BAL_SEVERITY
+    ]
+    if not rated:
+        return None
+    return max(rated, key=lambda ev: BAL_SEVERITY[ev.final_bal]).final_bal
+
+
+def _transect_severity(transect: dict) -> int:
+    return BAL_SEVERITY.get(transect.get("bal_rating", ""), -1)
+
+
 def _start(stage, label):
     return ("progress", {"stage": stage, "label": label, "status": "start", "detail": None})
 
@@ -271,6 +593,27 @@ async def run_assessment(request: AssessmentRequest):
                 "slope_note": "no vegetation within range",
             }
 
+        # Candidate slope: when any patch (including excluded) is in range but
+        # no hazardous patch exists, compute slope to the candidate so the
+        # geometry is ready if a photo or override later reclassifies it.
+        # When a hazardous patch exists, reuse the slope already computed.
+        candidate_slope_degrees = None
+        if side_veg.get("candidate_point_lat") is not None:
+            if side_veg["vegetation_found"]:
+                candidate_slope_degrees = side_slope["effective_slope_degrees"]
+            else:
+                try:
+                    cand_slope = await calculate_slope(
+                        house_lat=side_veg.get("transect_point_lat", location["latitude"]),
+                        house_lon=side_veg.get("transect_point_lon", location["longitude"]),
+                        veg_lat=side_veg["candidate_point_lat"],
+                        veg_lon=side_veg["candidate_point_lon"],
+                        horizontal_distance_m=side_veg["candidate_distance_m"],
+                    )
+                    candidate_slope_degrees = cand_slope["effective_slope_degrees"]
+                except ElevationServiceError:
+                    pass
+
         # Resolve this side's class + BAL: the map gives the conservative
         # baseline, and a confident photo class can raise (always allowed) or
         # lower (allowed but flagged for review) it. Distance and slope above
@@ -320,6 +663,17 @@ async def run_assessment(request: AssessmentRequest):
         if "outward_direction" in side_veg:
             record["outward_direction"] = side_veg["outward_direction"]
             record["outward_bearing"] = side_veg["outward_bearing"]
+
+        # Candidate geometry: nearest ANY patch (including excluded) on this
+        # side, with its slope. Absent in point mode and when no patch of any
+        # kind is outward within range. Consumed by nobody yet.
+        if "candidate_distance_m" in side_veg:
+            record["candidate_distance_m"] = side_veg["candidate_distance_m"]
+            record["candidate_as3959_class"] = side_veg["candidate_as3959_class"]
+            record["candidate_svtm_form"] = side_veg["candidate_svtm_form"]
+            record["candidate_point_lat"] = side_veg["candidate_point_lat"]
+            record["candidate_point_lon"] = side_veg["candidate_point_lon"]
+            record["candidate_effective_slope_degrees"] = candidate_slope_degrees
 
         per_direction_results.append(record)
 

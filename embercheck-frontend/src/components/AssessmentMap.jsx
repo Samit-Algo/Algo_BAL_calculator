@@ -105,6 +105,23 @@ function ScaleBar() {
   return null
 }
 
+function layerName(layer) {
+  if (layer instanceof L.GeoJSON) return 'GeoJSON'
+  if (layer instanceof L.Circle) return 'Circle'
+  if (layer instanceof L.Polyline) return layer instanceof L.Polygon ? 'Polygon' : 'Polyline'
+  if (layer instanceof L.Marker) return 'Marker'
+  if (layer instanceof L.LayerGroup) return 'LayerGroup'
+  return layer?.constructor?.name || 'Layer'
+}
+
+function layerPane(layer) {
+  return layer?.options?.pane || layer?.getPane?.()?.className || 'default'
+}
+
+function layerInteractive(layer) {
+  return layer?.options?.interactive !== false
+}
+
 // Leaflet-Geoman draw control: lets the user trace their own site boundary.
 // Attaches to the raw Leaflet map via useMap() (same pattern as FitToResult /
 // ScaleBar). Because Geoman is a plain Leaflet plugin, this works unchanged
@@ -122,6 +139,12 @@ function DrawControl({ onPolygon, registerClear, initialPolygon }) {
   // parent re-renders never tear down and rebuild the Geoman controls.
   const onPolygonRef = useRef(onPolygon)
   const registerClearRef = useRef(registerClear)
+  // Capture the initial polygon once. It MUST NOT be a dependency of the setup
+  // effect: every draw/edit emits a new polygon to the parent, which feeds back
+  // as a new initialPolygon prop. If that re-ran the effect it would tear down
+  // and rebuild the Geoman toolbar on every emit (a continuous rebuild storm),
+  // which is exactly why erase/edit/drag stopped responding after the first draw.
+  const initialPolygonRef = useRef(initialPolygon)
   useEffect(() => {
     onPolygonRef.current = onPolygon
   }, [onPolygon])
@@ -130,13 +153,13 @@ function DrawControl({ onPolygon, registerClear, initialPolygon }) {
   }, [registerClear])
 
   useEffect(() => {
+    console.log('[DrawControl] mounting — adding Geoman controls')
     map.pm.addControls({
       position: 'topleft',
       drawPolygon: true,
       editMode: true,
       dragMode: true,
       removalMode: true,
-      // Everything else off - a site boundary is a single polygon.
       drawMarker: false,
       drawPolyline: false,
       drawCircle: false,
@@ -147,6 +170,13 @@ function DrawControl({ onPolygon, registerClear, initialPolygon }) {
       cutPolygon: false,
     })
     map.pm.setGlobalOptions({ snappable: true, snapDistance: 20 })
+    console.log('[DrawControl] controls added', {
+      toolbarVisible: !!map.pm.Toolbar,
+      drawMode: map.pm.globalDrawModeEnabled?.(),
+      editMode: map.pm.globalEditModeEnabled?.(),
+      removalMode: map.pm.globalRemovalModeEnabled?.(),
+      geomanLayerCount: map.pm.getGeomanLayers?.().length,
+    })
 
     const drawnPolygons = () =>
       map.pm.getGeomanLayers().filter((layer) => layer instanceof L.Polygon)
@@ -163,14 +193,28 @@ function DrawControl({ onPolygon, registerClear, initialPolygon }) {
     }
 
     const bindPolygon = (layer) => {
+      layer.options.interactive = true
       layer.on('pm:edit', emit)
       layer.on('pm:update', emit)
       layer.on('pm:dragend', emit)
+      layer.on('click', () => {
+        console.log('[DrawControl:drawn-polygon-click]', {
+          drawMode: map.pm.globalDrawModeEnabled?.(),
+          editMode: map.pm.globalEditModeEnabled?.(),
+          removalMode: map.pm.globalRemovalModeEnabled?.(),
+        })
+      })
       emit()
     }
 
     const handleCreate = (event) => {
       const layer = event.layer
+      console.log('[DrawControl:pm:create]', {
+        shape: event.shape,
+        layerType: layerName(layer),
+        pane: layerPane(layer),
+        interactive: layerInteractive(layer),
+      })
       // Keep a single boundary: drop any earlier polygon.
       drawnPolygons()
         .filter((other) => other !== layer)
@@ -178,8 +222,31 @@ function DrawControl({ onPolygon, registerClear, initialPolygon }) {
       bindPolygon(layer)
     }
 
+    const handleRemove = (event) => {
+      console.log('[DrawControl:pm:remove]', {
+        layerType: layerName(event.layer),
+        remainingPolygons: drawnPolygons().length,
+      })
+      emit()
+    }
+
+    const handleGlobalDrawToggled = (event) => {
+      console.log('[DrawControl:pm:globaldrawmodetoggled]', {
+        enabled: event.enabled,
+        shape: event.shape,
+      })
+    }
+
+    const handleGlobalRemovalToggled = (event) => {
+      console.log('[DrawControl:pm:globalremovalmodetoggled]', {
+        enabled: event.enabled,
+      })
+    }
+
     map.on('pm:create', handleCreate)
-    map.on('pm:remove', emit)
+    map.on('pm:remove', handleRemove)
+    map.on('pm:globaldrawmodetoggled', handleGlobalDrawToggled)
+    map.on('pm:globalremovalmodetoggled', handleGlobalRemovalToggled)
 
     // Hand a clear() up so the parent's "Clear" button can reset the drawing.
     registerClearRef.current?.(() => {
@@ -188,9 +255,9 @@ function DrawControl({ onPolygon, registerClear, initialPolygon }) {
     })
 
     // Pre-load a saved boundary when reopening for edit.
-    if (initialPolygon && !initialLoadedRef.current) {
+    if (initialPolygonRef.current && !initialLoadedRef.current) {
       initialLoadedRef.current = true
-      const layer = L.geoJSON(initialPolygon).getLayers()[0]
+      const layer = L.geoJSON(initialPolygonRef.current).getLayers()[0]
       if (layer instanceof L.Polygon) {
         layer.addTo(map)
         bindPolygon(layer)
@@ -199,7 +266,9 @@ function DrawControl({ onPolygon, registerClear, initialPolygon }) {
 
     return () => {
       map.off('pm:create', handleCreate)
-      map.off('pm:remove', emit)
+      map.off('pm:remove', handleRemove)
+      map.off('pm:globaldrawmodetoggled', handleGlobalDrawToggled)
+      map.off('pm:globalremovalmodetoggled', handleGlobalRemovalToggled)
       drawnPolygons().forEach((layer) => {
         layer.off('pm:edit', emit)
         layer.off('pm:update', emit)
@@ -210,30 +279,32 @@ function DrawControl({ onPolygon, registerClear, initialPolygon }) {
       registerClearRef.current?.(null)
       initialLoadedRef.current = false
     }
-  }, [map, initialPolygon])
+    // Setup runs once per mount only. initialPolygon is read from a ref (see
+    // above) so emit -> parent setPolygon -> new initialPolygon prop does NOT
+    // tear down and rebuild the toolbar mid-interaction.
+  }, [map])
 
   return null
 }
 
-// Style each vegetation patch by its AS 3959 class; the governing patch (the
-// one that drives the BAL rating) gets a thicker red outline.
+// Style each vegetation patch by its AS 3959 class. Secondary visual weight
+// so the user's boundary reads as the primary shape.
 function patchStyle(feature) {
   const governing = feature.properties.governing
   return {
     color: governing ? '#C23B22' : '#F3EEDF',
-    weight: governing ? 3 : 1,
-    opacity: governing ? 1 : 0.7,
+    weight: governing ? 2 : 1,
+    opacity: governing ? 0.8 : 0.5,
     fillColor: vegColor(feature.properties.as3959_class),
-    fillOpacity: governing ? 0.6 : 0.4,
+    fillOpacity: governing ? 0.35 : 0.2,
   }
 }
 
-// Tooltip on each patch.
 function onEachPatch(feature, layer) {
   const p = feature.properties
   const pct = p.pct_id != null ? ` · PCT #${p.pct_id}` : ''
   const label = `${p.as3959_class} — ${p.distance_m} m${pct}${
-    p.governing ? ' (drives the rating)' : ''
+    p.governing ? ' (map draft — refine with photos)' : ''
   }`
   layer.bindTooltip(label, { sticky: true })
 }
@@ -317,6 +388,7 @@ function BoundaryEdgeHighlight({ siteBoundary, highlightedSide }) {
         <Polyline
           key={`halo-${index}`}
           positions={edge.latlngs}
+          interactive={false}
           pathOptions={{ color: '#FFFFFF', weight: 9, opacity: 0.9 }}
         />
       ))}
@@ -324,6 +396,7 @@ function BoundaryEdgeHighlight({ siteBoundary, highlightedSide }) {
         <Polyline
           key={`edge-${index}`}
           positions={edge.latlngs}
+          interactive={false}
           pathOptions={{ color: '#7A1F1F', weight: 5, opacity: 1 }}
         />
       ))}
@@ -454,15 +527,24 @@ function MapCompass() {
 
 // Colour legend for the vegetation classes present, plus what the ring and the
 // red outline mean. Plain English, in a compact corner card.
-function MapLegend({ vegetation }) {
+function MapLegend({ vegetation, hasBoundary }) {
   const classes = [
     ...new Set(vegetation.features.map((f) => f.properties.as3959_class)),
   ]
 
   return (
-    <div className="absolute bottom-9 left-3 z-[500] max-w-[200px] rounded-lg bg-ember-cream/95 p-2 text-xs text-ember-forest shadow-md">
+    <div className="absolute bottom-9 left-3 z-[500] max-w-[220px] rounded-lg bg-ember-cream/95 p-2 text-xs text-ember-forest shadow-md">
       <div className="mb-1 font-semibold">What you're seeing</div>
       <ul className="space-y-1">
+        {hasBoundary && (
+          <li className="flex items-center gap-2">
+            <span
+              className="inline-block h-3 w-3 shrink-0 rounded-sm border-2"
+              style={{ borderColor: '#E8C547', borderStyle: 'dashed', backgroundColor: 'transparent' }}
+            />
+            Your boundary
+          </li>
+        )}
         {classes.map((cls) => (
           <li key={cls} className="flex items-center gap-2">
             <span
@@ -474,7 +556,7 @@ function MapLegend({ vegetation }) {
         ))}
         <li className="flex items-center gap-2">
           <span className="inline-block h-3 w-3 shrink-0 rounded-sm border-2 border-[#C23B22]" />
-          drives the rating
+          map draft (refine with photos)
         </li>
         <li className="flex items-center gap-2">
           <span className="inline-block h-3 w-3 shrink-0 rounded-full border-2 border-dashed border-white bg-transparent" />
@@ -520,8 +602,22 @@ export default function AssessmentMap({
     clearDrawingRef.current = fn
   }, [])
 
-  // Saved boundary outline on the read-only main map (after Done on boundary page).
-  const siteBoundary = siteBoundaryOverlay || geometry?.site_polygon || null
+  // The user's drawn site boundary (read-only display). Only accept a simple
+  // Polygon or Feature — never a FeatureCollection (that would be vegetation).
+  const rawBoundary = siteBoundaryOverlay || geometry?.site_polygon || null
+  const siteBoundary = rawBoundary && (
+    rawBoundary.type === 'Polygon' ||
+    rawBoundary.type === 'MultiPolygon' ||
+    (rawBoundary.type === 'Feature' && rawBoundary.geometry?.type === 'Polygon')
+  ) ? rawBoundary : null
+  console.log('[AssessmentMap] boundary data:', {
+    hasSiteBoundaryOverlay: !!siteBoundaryOverlay,
+    overlayType: siteBoundaryOverlay?.type,
+    hasSitePolygon: !!geometry?.site_polygon,
+    sitePolygonType: geometry?.site_polygon?.type,
+    rawType: rawBoundary?.type,
+    accepted: !!siteBoundary,
+  })
 
   // GeoJSON coordinates are [lon, lat]; Leaflet wants [lat, lon].
   let position = null
@@ -580,14 +676,17 @@ export default function AssessmentMap({
 
             {position && (
               <>
-                {/* Vegetation patches (toggleable). */}
+                {/* Vegetation patches (toggleable). Key includes drawEnabled
+                    so the layer remounts with interactive toggled (Leaflet's
+                    interactive option is immutable after construction). */}
                 {hasPatches && (
                   <LayersControl.Overlay checked name="Vegetation">
                     <GeoJSON
-                      key={JSON.stringify(geometry.property_point.coordinates)}
+                      key={`veg-${drawEnabled}-${JSON.stringify(geometry.property_point.coordinates)}`}
                       data={vegetation}
                       style={patchStyle}
-                      onEachFeature={onEachPatch}
+                      onEachFeature={drawEnabled ? undefined : onEachPatch}
+                      interactive={!drawEnabled}
                     />
                   </LayersControl.Overlay>
                 )}
@@ -597,8 +696,10 @@ export default function AssessmentMap({
                 <LayersControl.Overlay checked name="100 m assessment zone">
                   <LayerGroup>
                     <Circle
+                      key={`ring-halo-${drawEnabled}`}
                       center={position}
                       radius={geometry.assessment_ring_m}
+                      interactive={!drawEnabled}
                       pathOptions={{
                         color: '#000000',
                         weight: 5,
@@ -607,8 +708,10 @@ export default function AssessmentMap({
                       }}
                     />
                     <Circle
+                      key={`ring-dash-${drawEnabled}`}
                       center={position}
                       radius={geometry.assessment_ring_m}
+                      interactive={!drawEnabled}
                       pathOptions={{
                         color: '#FFFFFF',
                         weight: 2,
@@ -632,8 +735,10 @@ export default function AssessmentMap({
                     anyone who wants to see the raw query radius. */}
                 <LayersControl.Overlay name="Search area (150 m)">
                   <Circle
+                    key={`search-${drawEnabled}`}
                     center={position}
                     radius={geometry.search_buffer_m}
+                    interactive={!drawEnabled}
                     pathOptions={{
                       color: '#C28E3F',
                       weight: 1,
@@ -656,13 +761,20 @@ export default function AssessmentMap({
             />
           )}
 
-          {/* The assessed site boundary outline (boundary mode), so it stays
-              visible after the interactive drawing layer is gone. */}
-          {siteBoundary && (
+          {/* The user's site boundary — bold dashed outline, clearly distinct
+              from the solid-filled vegetation patches. Hidden in draw mode
+              so it doesn't fight the editable Geoman layer for clicks. */}
+          {siteBoundary && !drawEnabled && (
             <GeoJSON
               key={JSON.stringify(siteBoundary)}
               data={siteBoundary}
-              style={{ color: '#F3EEDF', weight: 2, dashArray: '5 5', fill: false }}
+              style={{
+                color: '#E8C547',
+                weight: 3,
+                opacity: 1,
+                dashArray: '8 6',
+                fill: false,
+              }}
             />
           )}
 
@@ -681,16 +793,20 @@ export default function AssessmentMap({
                   Kept always-on (it's the core story, not a toggle). */}
               {distanceLine && (
                 <Polyline
+                  key={`dist-${drawEnabled}`}
                   positions={distanceLine}
+                  interactive={!drawEnabled}
                   pathOptions={{ color: '#7A1F1F', weight: 2, dashArray: '6 6' }}
                 >
-                  <Tooltip permanent direction="center">
-                    {`${governingDistance ?? ''} m`}
-                  </Tooltip>
+                  {!drawEnabled && (
+                    <Tooltip permanent direction="center">
+                      {`${governingDistance ?? ''} m`}
+                    </Tooltip>
+                  )}
                 </Polyline>
               )}
 
-              <Marker position={position} />
+              <Marker key={`pin-${drawEnabled}`} position={position} interactive={!drawEnabled} keyboard={false} />
               <FitToResult geometry={geometry} />
             </>
           )}
@@ -698,7 +814,7 @@ export default function AssessmentMap({
 
         <MapCompass />
 
-        {hasPatches && <MapLegend vegetation={vegetation} />}
+        {hasPatches && <MapLegend vegetation={vegetation} hasBoundary={!!siteBoundary} />}
 
         {/* Clear the drawn site boundary. Shown only once something is drawn;
             calls the clear() the DrawControl registered. */}
@@ -718,8 +834,8 @@ export default function AssessmentMap({
         className="mt-3 text-xs leading-relaxed"
         style={{ color: 'var(--ink-soft)' }}
       >
-        Dashed circle = ~100 m assessment zone. Vegetation within it affects your
-        rating.
+        Dashed circle = ~100 m assessment zone. Vegetation within it is the map
+        draft — refine with photos for each side.
       </p>
     </div>
   )

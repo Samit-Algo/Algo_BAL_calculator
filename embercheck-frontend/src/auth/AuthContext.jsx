@@ -74,6 +74,13 @@ export function AuthProvider({ children }) {
     return me
   }, [])
 
+  const loginWithGoogle = useCallback(async (idToken) => {
+    await auth.loginWithGoogle(idToken)
+    const me = await auth.getMe()
+    setUser(me)
+    return me
+  }, [])
+
   const logout = useCallback(async () => {
     await auth.logout()
     setUser(null)
@@ -116,6 +123,7 @@ export function AuthProvider({ children }) {
     status,
     login,
     signup,
+    loginWithGoogle,
     logout,
     refreshUser,
     openAuthModal,

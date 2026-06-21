@@ -9,8 +9,10 @@ from beanie import PydanticObjectId
 from bson.errors import InvalidId
 from fastapi import HTTPException, status
 
-from app.models.case import Case, CasePhoto
+from app.models.case import Case, CasePhoto, SectorEvidence
 from app.services.assessment_pipeline import BAL_SEVERITY
+
+COMPASS_SIDES = ("North", "East", "South", "West")
 
 
 def worst_read(*reads: dict | None) -> dict | None:
@@ -78,6 +80,80 @@ def polygon_coordinates(geojson: dict | None) -> list:
     if geojson.get("type") == "Feature":
         return (geojson.get("geometry") or {}).get("coordinates") or []
     return geojson.get("coordinates") or []
+
+
+def build_or_merge_sector_evidence(
+    existing: list[SectorEvidence] | None,
+    boundary_assessment: dict | None,
+) -> list[SectorEvidence] | None:
+    """Build or refresh the four SectorEvidence entries from a boundary result.
+
+    Returns None when there is no boundary assessment (point-only case). Otherwise
+    returns exactly four entries (North/East/South/West) with gis_draft_classification
+    set to the governing transect's vegetation class for that side, using the same
+    worst-per-side rule the codebase already uses (highest BAL severity, ties broken
+    by closest distance).
+
+    MERGE rule: when ``existing`` carries an entry for a side, that entry is returned
+    with only gis_draft_classification refreshed — photos, overrides,
+    combined_classification, combined_confidence, review_flags, and final_bal are
+    PRESERVED. This means re-assessing the boundary never destroys attached evidence.
+    """
+    if not boundary_assessment:
+        return None
+
+    per_direction = boundary_assessment.get("per_direction") or []
+
+    # Group transects by compass side and pick each side's governing transect.
+    side_governing: dict[str, dict | None] = {side: None for side in COMPASS_SIDES}
+    for transect in per_direction:
+        side = transect.get("outward_direction") or transect.get("direction")
+        if side not in side_governing:
+            continue
+        best = side_governing[side]
+        if best is None or _transect_worse_than(transect, best):
+            side_governing[side] = transect
+
+    # Index existing entries by compass_side for O(1) lookup.
+    existing_by_side: dict[str, SectorEvidence] = {}
+    if existing:
+        for ev in existing:
+            existing_by_side[ev.compass_side] = ev
+
+    result: list[SectorEvidence] = []
+    for side in COMPASS_SIDES:
+        governing = side_governing[side]
+        draft_class = (
+            governing.get("vegetation_class")
+            if governing and governing.get("vegetation_found")
+            else None
+        )
+        prev = existing_by_side.get(side)
+        if prev is not None:
+            prev.gis_draft_classification = draft_class
+            result.append(prev)
+        else:
+            result.append(SectorEvidence(
+                compass_side=side,
+                gis_draft_classification=draft_class,
+            ))
+    return result
+
+
+def _transect_worse_than(candidate: dict, current: dict) -> bool:
+    """True when candidate is worse (more severe) than current, using BAL severity
+    then closest distance as tiebreaker — the same rule as buildSideSummaries."""
+    cand_sev = BAL_SEVERITY.get(candidate.get("bal_rating", ""), -1)
+    curr_sev = BAL_SEVERITY.get(current.get("bal_rating", ""), -1)
+    if cand_sev != curr_sev:
+        return cand_sev > curr_sev
+    cand_dist = candidate.get("distance_m")
+    curr_dist = current.get("distance_m")
+    if cand_dist is None:
+        return False
+    if curr_dist is None:
+        return True
+    return cand_dist < curr_dist
 
 
 def _parse_captured_at(value) -> datetime | None:

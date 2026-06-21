@@ -154,6 +154,61 @@ input::placeholder {
   }
 }
 
+/* Modern hover/focus tooltip: a small dark pill above the element, right-edge
+   anchored so it never overflows a card's right side. Set `data-tip` on the
+   element and add the `ec-tip` class; pair with an aria-label for a11y. */
+.ec-tip {
+  position: relative;
+}
+.ec-tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  white-space: nowrap;
+  padding: 5px 9px;
+  border-radius: 8px;
+  background: rgba(20, 18, 11, 0.92);
+  color: #f7f2e2;
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25);
+  opacity: 0;
+  transform: translateY(4px);
+  pointer-events: none;
+  transition: opacity 0.14s ease, transform 0.14s ease;
+  z-index: 40;
+}
+.ec-tip:hover::after,
+.ec-tip:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* Confirmation dialog: centered ember-themed card over a dark scrim. Sits above
+   other overlays (capture/boundary at z-index 200) so it can confirm from them. */
+.ec-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(20, 18, 11, 0.72);
+}
+.ec-confirm-panel {
+  position: relative;
+  width: 100%;
+  max-width: 420px;
+  padding: 22px;
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.45);
+}
+
 /* Boundary assessment: full-width map + side panel (desktop side-by-side). */
 .ec-boundary-overlay {
   position: fixed;

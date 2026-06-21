@@ -128,51 +128,74 @@ async def find_nearest_vegetation(
     # then turned into the per_direction result after.
     per_direction_best = {direction: None for direction in DIRECTIONS}
 
+    # Retained excluded patches (not hazardous but within range), so boundary
+    # transects can find the nearest candidate patch regardless of hazard status.
+    # Consumed by _build_transects only; not returned in the result dict.
+    retained_patches = []
+
+    # The nearest ANY patch per sector (hazardous or excluded), so each side
+    # carries candidate geometry even when the nearest patch is excluded.
+    per_direction_candidate_best = {direction: None for direction in DIRECTIONS}
+
     for feature in features:
         attributes = feature["properties"]
         svtm_class = attributes.get("vegClass")
-
-        # Skip vegetation classes that AS 3959 treats as not hazardous
-        # (e.g. cleared land, water) - they don't drive the BAL rating.
         classification = classify_vegetation(svtm_class)
-        if classification["as3959_class"] == "Excluded":
-            # Certain exclusions (water, non-vegetated, confidently non-hazardous)
-            # are dropped exactly as before. But when the crosswalk row itself is
-            # uncertain about the exclusion - it set manual_review, or rated the
-            # call "Low" confidence - the patch must not vanish silently: record
-            # how close it sits so the pipeline can flag a review if it's the
-            # nearest fuel. It is still NOT added to hazardous_patches, so it
-            # never changes the BAL, distance, or which patch governs.
-            if classification["manual_review"] or classification["confidence"] == "Low":
-                excluded_distance = _patch_distance_to_site(feature["geometry"], site_geom)
-                if excluded_distance is not None and excluded_distance <= max_radius_m:
-                    if (
-                        low_confidence_excluded_min_distance_m is None
-                        or excluded_distance < low_confidence_excluded_min_distance_m
-                    ):
-                        low_confidence_excluded_min_distance_m = round(excluded_distance, 1)
-            continue
+        is_excluded = classification["as3959_class"] == "Excluded"
 
+        # Compute geometry for ALL patches (hazardous and excluded) so we can
+        # track candidate distances regardless of hazard status.
         polygon_parts = _to_polygon_parts(feature["geometry"])
         if not polygon_parts:
             continue
 
         closest_part = min(polygon_parts, key=site_geom.distance)
-        # The exact point on this patch nearest the site (in 3308 metres) -
-        # gives us both the distance and the bearing for sector assignment.
         _, closest_point_3308 = nearest_points(site_geom, closest_part)
         distance_m = site_geom.distance(closest_point_3308)
 
-        # The bounding box we queried is a square, but we only want a true
-        # circle of radius max_radius_m, so drop anything further than that.
         if distance_m > max_radius_m:
             continue
 
-        # Bin this patch into its compass sector, and remember it if it's the
-        # nearest hazardous patch seen on that side so far.
         direction = _bearing_to_direction(
             _grid_bearing(house_x, house_y, closest_point_3308.x, closest_point_3308.y)
         )
+
+        # Track nearest ANY patch per sector (candidate — includes excluded).
+        cand_best = per_direction_candidate_best[direction]
+        if cand_best is None or distance_m < cand_best["distance_m"]:
+            per_direction_candidate_best[direction] = {
+                "distance_m": distance_m,
+                "svtm_class": svtm_class,
+                "as3959_class": classification["as3959_class"],
+                "svtm_form": attributes.get("vegForm"),
+                "point_3308": closest_point_3308,
+            }
+
+        combined_geom = unary_union(polygon_parts)
+
+        if is_excluded:
+            # C1 uncertain-exclusion tracking (unchanged logic). The distance
+            # is already computed above; no extra _patch_distance_to_site call.
+            if classification["manual_review"] or classification["confidence"] == "Low":
+                if (
+                    low_confidence_excluded_min_distance_m is None
+                    or distance_m < low_confidence_excluded_min_distance_m
+                ):
+                    low_confidence_excluded_min_distance_m = round(distance_m, 1)
+            # Retain geometry so boundary transects can find the nearest
+            # candidate patch regardless of hazard status.
+            retained_patches.append({
+                "geometry_3308": combined_geom,
+                "as3959_class": classification["as3959_class"],
+                "svtm_form": attributes.get("vegForm"),
+                "svtm_class": svtm_class,
+            })
+            continue
+
+        # --- Hazardous-patch logic below (unchanged) ---
+
+        # Bin this patch into its compass sector, and remember it if it's the
+        # nearest hazardous patch seen on that side so far.
         sector_best = per_direction_best[direction]
         if sector_best is None or distance_m < sector_best["distance_m"]:
             per_direction_best[direction] = {
@@ -189,7 +212,7 @@ async def find_nearest_vegetation(
         # PCTID = the SVTM Plant Community Type id (a vegetation-type id, shared
         # by all patches of the same community); PCTName is its readable name.
         patch = {
-            "geometry_3308": unary_union(polygon_parts),
+            "geometry_3308": combined_geom,
             "distance_m": round(distance_m, 1),
             "as3959_class": classification["as3959_class"],
             "svtm_form": attributes.get("vegForm"),
@@ -217,8 +240,9 @@ async def find_nearest_vegetation(
     # leaves this None and keeps the four compass sectors untouched.
     transects = None
     if site_polygon is not None:
+        all_patches = hazardous_patches + retained_patches
         transects = _build_transects(
-            site_geom, hazardous_patches, max_radius_m, TRANSECT_COUNT
+            site_geom, hazardous_patches, max_radius_m, TRANSECT_COUNT, all_patches
         )
 
     # Reproject each patch's geometry from NSW Lambert metres (EPSG:3308) back
@@ -316,7 +340,10 @@ def _build_per_direction(per_direction_best: dict) -> dict:
     return per_direction
 
 
-def _build_transects(site_geom, hazardous_patches: list, max_radius_m: int, count: int) -> list:
+def _build_transects(
+    site_geom, hazardous_patches: list, max_radius_m: int, count: int,
+    all_patches: list | None = None,
+) -> list:
     """
     Run perpendicular transects around the drawn site boundary, each finding the
     nearest hazardous patch lying OUTWARD from its boundary point. Each transect
@@ -334,6 +361,12 @@ def _build_transects(site_geom, hazardous_patches: list, max_radius_m: int, coun
         ADDITIONAL to the even ones, so adding them can only keep a side's rating
         the same or make it worse (the worst transect governs), never better.
 
+    When ``all_patches`` is given (hazardous + retained excluded), each transect
+    also carries ``candidate_*`` fields: the nearest ANY outward patch regardless
+    of hazard status. These are consumed by nobody yet — they provide the
+    distance/class/point geometry needed if a photo or assessor later reclassifies
+    an excluded patch as hazardous.
+
     All geometry is in NSW Lambert metres (EPSG:3308). This runs before the
     patches' 'geometry_3308' is reprojected away, so it can measure against it.
     Each transect dict adds, on top of the per_direction keys:
@@ -347,6 +380,7 @@ def _build_transects(site_geom, hazardous_patches: list, max_radius_m: int, coun
     total_length = boundary.length
     centroid = site_geom.centroid
     transects = []
+    candidate_patches = all_patches if all_patches is not None else hazardous_patches
 
     # Even-spaced transects: sample at the midpoint of each equal arc-length step
     # so points sit on edges rather than bunching at the polygon's corners.
@@ -354,8 +388,9 @@ def _build_transects(site_geom, hazardous_patches: list, max_radius_m: int, coun
         sample = boundary.interpolate((i + 0.5) / count * total_length)
         outward_bearing = _grid_bearing(centroid.x, centroid.y, sample.x, sample.y)
         best = _nearest_outward_patch(sample, outward_bearing, hazardous_patches, max_radius_m)
+        candidate = _nearest_outward_patch(sample, outward_bearing, candidate_patches, max_radius_m)
         transects.append(
-            _transect_record(f"T{i + 1:02d}", sample, outward_bearing, best)
+            _transect_record(f"T{i + 1:02d}", sample, outward_bearing, best, candidate=candidate)
         )
 
     # Snapped transects: one per patch, at the exact nearest boundary point, so
@@ -368,12 +403,16 @@ def _build_transects(site_geom, hazardous_patches: list, max_radius_m: int, coun
         outward_bearing = _grid_bearing(
             centroid.x, centroid.y, boundary_point.x, boundary_point.y
         )
+        candidate = _nearest_outward_patch(
+            boundary_point, outward_bearing, candidate_patches, max_radius_m
+        )
         transects.append(
             _transect_record(
                 f"S{j:02d}",
                 boundary_point,
                 outward_bearing,
                 (distance_m, patch_point, patch),
+                candidate=candidate,
             )
         )
 
@@ -404,10 +443,12 @@ def _nearest_outward_patch(sample, outward_bearing, hazardous_patches, max_radiu
     return best
 
 
-def _transect_record(label, sample, outward_bearing, best):
+def _transect_record(label, sample, outward_bearing, best, candidate=None):
     """
     Build one transect dict (per_direction-shaped) for a boundary point. `best`
     is (distance_m, nearest_point_3308, patch) or None when no hazard is in range.
+    `candidate` is the same shape but for the nearest ANY patch (including
+    excluded); None when no patch of any kind is outward within range.
     """
 
     sample_lon, sample_lat = _TO_WGS84.transform(sample.x, sample.y)
@@ -445,6 +486,16 @@ def _transect_record(label, sample, outward_bearing, best):
                 "nearest_point_lon": veg_lon,
             }
         )
+
+    if candidate is not None:
+        cand_dist, cand_point, cand_patch = candidate
+        cand_lon, cand_lat = _TO_WGS84.transform(cand_point.x, cand_point.y)
+        record["candidate_distance_m"] = round(cand_dist, 1)
+        record["candidate_as3959_class"] = cand_patch["as3959_class"]
+        record["candidate_svtm_form"] = cand_patch["svtm_form"]
+        record["candidate_svtm_class"] = cand_patch["svtm_class"]
+        record["candidate_point_lat"] = cand_lat
+        record["candidate_point_lon"] = cand_lon
 
     return record
 

@@ -82,6 +82,16 @@ class Settings:
         )
     )
 
+    # Log file for the sector-photo background analysis task (classify_and_combine
+    # + reconcile_all_sectors), so a silent failure is never invisible. Set
+    # ANALYSIS_LOG_PATH to change it; defaults to logs/analysis.log.
+    ANALYSIS_LOG_PATH: Path = Path(
+        os.getenv(
+            "ANALYSIS_LOG_PATH",
+            str(Path(__file__).resolve().parent.parent / "logs" / "analysis.log"),
+        )
+    )
+
 
 # A single ready-to-use settings instance, imported elsewhere in the app.
 settings = Settings()

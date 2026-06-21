@@ -15,6 +15,7 @@ export default function BoundaryStepCard({
   initialPolygon = null,
   initialCaseId = null,
   onBoundarySaved,
+  onBoundaryCleared,
   onHoverSide,
 }) {
   const { ensureAuthenticated } = useAuth()
@@ -49,17 +50,30 @@ export default function BoundaryStepCard({
     })
   }
 
+  function handleClearBoundary() {
+    setBoundaryResult(null)
+    setSavedPolygon(null)
+    setCaseId(null)
+    onBoundaryCleared?.()
+  }
+
   if (boundaryResult) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* View = view + edit: opens the full boundary page (result view, then
+            "Edit boundary on map"). Replaces the old "Edit boundary" button —
+            one affordance, same destination. Rendered INSIDE the result card
+            via the `action` slot. */}
         <BoundaryResultPanel
           variant="summary"
           result={boundaryResult}
           onHoverSide={onHoverSide}
+          action={
+            <ECButton full icon="locate" onClick={openBoundaryPage} disabled={starting}>
+              {starting ? 'Opening…' : 'View'}
+            </ECButton>
+          }
         />
-        <ECButton full variant="ghost" icon="locate" onClick={openBoundaryPage} disabled={starting}>
-          {starting ? 'Opening…' : 'Edit boundary'}
-        </ECButton>
         {pageOpen && (
           <BoundaryAssessmentPage
             address={result?.address || result?.matched_address}
@@ -69,6 +83,7 @@ export default function BoundaryStepCard({
             initialCaseId={caseId}
             onClose={() => setPageOpen(false)}
             onComplete={handleComplete}
+            onClear={handleClearBoundary}
           />
         )}
       </div>
@@ -103,8 +118,9 @@ export default function BoundaryStepCard({
             textWrap: 'pretty',
           }}
         >
-          Trace your site on the map and we measure vegetation from the boundary — saved to your
-          account so you can return and edit it later.
+          Go deeper than the single map point — trace your block and we measure every side for a
+          sharper, more accurate rating, plus a report you can send.{' '}
+          <strong style={{ color: 'var(--ink)', fontWeight: 700 }}>$29.</strong>
         </p>
 
         <ECButton full icon="locate" onClick={openBoundaryPage} disabled={starting}>
@@ -133,6 +149,7 @@ export default function BoundaryStepCard({
           initialCaseId={caseId}
           onClose={() => setPageOpen(false)}
           onComplete={handleComplete}
+          onClear={handleClearBoundary}
         />
       )}
     </>

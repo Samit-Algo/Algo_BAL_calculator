@@ -17,7 +17,9 @@ class UserRead(schemas.BaseUser[PydanticObjectId]):
 
     name: str | None = None
     created_at: datetime
+    updated_at: datetime
     auth_provider: str
+    google_id: str | None = None
 
 
 class UserCreate(schemas.BaseUserCreate):

@@ -6,14 +6,14 @@ import AssessmentMap from './components/AssessmentMap'
 import ResultPanel from './components/ResultPanel'
 import DrivingFactors from './components/DrivingFactors'
 import BoundaryStepCard from './components/BoundaryStepCard'
-import NextStepCard from './components/NextStepCard'
+import AssessorHandoffCard from './components/AssessorHandoffCard'
 import LoadingState from './components/LoadingState'
 import ContourField from './components/ui/ContourField'
 import Glyph from './components/ui/Glyph'
 import Reveal from './components/ui/Reveal'
 import { ECCard, ECEyebrow } from './components/ui/ECCard'
 import { assessStream } from './lib/api'
-import { getCase, getCasePhotoURL, createCase } from './lib/cases'
+import { getCase, createCase } from './lib/cases'
 import { caseHasBoundary, boundaryPolygonFromCase } from './lib/boundary'
 import { worstBalRating } from './lib/ec'
 import { getRefreshToken } from './lib/auth'
@@ -42,7 +42,7 @@ function App() {
   // The signed-in user (or null). When present, an address check is auto-saved
   // as a DRAFT case so it lands in My Properties and the boundary/photo flows
   // update that same case. Logged out stays public/stateless.
-  const { user } = useAuth()
+  const { user, ensureAuthenticated } = useAuth()
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
@@ -54,10 +54,6 @@ function App() {
   // Saved boundary assessment (separate from the free point result), set when the
   // user completes the boundary workflow or resumes a boundary case.
   const [boundarySession, setBoundarySession] = useState(null)
-  // The bal_rating of the latest in-session photo-sharpened read, so the headline
-  // can govern to the worst across point, photo, and boundary (safety). On resume
-  // the sharpened read is already in `result`, so this only covers the live flow.
-  const [sharpenedRating, setSharpenedRating] = useState(null)
   // The side (N/E/S/W) hovered in the boundary summary, for map highlighting.
   const [highlightedSide, setHighlightedSide] = useState(null)
   // Identifies the latest assessment run; lets us ignore an in-flight stream's
@@ -79,15 +75,27 @@ function App() {
   const [resuming, setResuming] = useState(
     () => hasSession && Boolean(bootIntent.caseId),
   )
-  // Object URLs for a resumed case's photos (so thumbnails render on resume),
-  // revoked when we leave / load another case.
-  const [resumedPhotoUrls, setResumedPhotoUrls] = useState({})
-  const photoUrlsRef = useRef({})
 
   function handleBoundarySaved({ boundaryResult, polygon, caseId, caseRecord }) {
     setBoundarySession({ boundaryResult, polygon, caseId })
     if (caseRecord) setActiveCase(caseRecord)
     setHash(`#/cases/${caseId}`)
+  }
+
+  function handleBoundaryCleared() {
+    setBoundarySession(null)
+    setHighlightedSide(null)
+  }
+
+  // A property was deleted on the dashboard. If it's the one currently held in
+  // session (boundary session or resumed active case), clear those so nothing
+  // dangles on a now-gone case. Other properties are unaffected.
+  function handleCaseDeleted(caseId) {
+    if (boundarySession?.caseId === caseId) {
+      setBoundarySession(null)
+      setHighlightedSide(null)
+    }
+    if (activeCase?.id === caseId) setActiveCase(null)
   }
 
   // Logged-in only: persist a just-checked address as a DRAFT case in the
@@ -147,26 +155,12 @@ function App() {
   function handleAssess(address) {
     setOverrides(NO_OVERRIDES)
     setBoundarySession(null)
-    setSharpenedRating(null)
     setActiveCase(null)
     runAssess(address, NO_OVERRIDES, null)
   }
 
   // Clear all result/session state and invalidate any in-flight run so its late
   // results can't pull us back into the results view.
-  function revokePhotoUrls() {
-    const count = Object.keys(photoUrlsRef.current).length
-    if (count) plog('revokePhotoUrls revoking', count, 'url(s)')
-    for (const url of Object.values(photoUrlsRef.current)) {
-      try {
-        URL.revokeObjectURL(url)
-      } catch {
-        /* ignore */
-      }
-    }
-    photoUrlsRef.current = {}
-  }
-
   function resetResultState() {
     runId.current++
     setLoading(false)
@@ -176,11 +170,8 @@ function App() {
     setLastAddress('')
     setOverrides(NO_OVERRIDES)
     setBoundarySession(null)
-    setSharpenedRating(null)
     setHighlightedSide(null)
     setActiveCase(null)
-    revokePhotoUrls()
-    setResumedPhotoUrls({})
   }
 
   // Header back: a resumed case returns to the dashboard; a fresh result returns
@@ -193,7 +184,9 @@ function App() {
   }
 
   // Open the dashboard ("My Properties").
-  function openDashboard() {
+  async function openDashboard() {
+    const ok = await ensureAuthenticated()
+    if (!ok) return
     setView('dashboard')
     setHash('#/dashboard')
   }
@@ -206,8 +199,7 @@ function App() {
   }
 
   // Resume a saved case: load it and render the stored assessment in the results
-  // view, status-aware (NextStepCard reads activeCase). Also fetches the stored
-  // photo thumbnails so a sharpened case shows its photos.
+  // view. The boundary read (if any) seeds the boundary section below.
   async function handleOpenCase(caseId) {
     resetResultState()
     const myRun = runId.current
@@ -217,39 +209,7 @@ function App() {
     try {
       const loaded = await getCase(caseId)
       if (runId.current !== myRun) return
-
-      // STEP 1: does the case actually carry photos with file paths?
-      const photos = loaded.photos || []
-      plog('case loaded', loaded.id, 'status', loaded.status, 'photos', photos.length)
-      plog(
-        'case photo metadata',
-        photos.map((p) => ({ direction: p.direction, hasFilePath: Boolean(p.file_path) })),
-      )
-
-      // STEP 2: fetch each stored JPEG as an object URL BEFORE committing the
-      // result, so NextStepCard mounts with the thumbnails already present
-      // (it snapshots initialPhotos once on mount).
-      const urls = {}
-      if (photos.length) {
-        await Promise.all(
-          photos.map(async (p) => {
-            plog('fetch loop ->', p.direction, 'url', `/cases/${loaded.id}/photos/${p.direction}`)
-            const url = await getCasePhotoURL(loaded.id, p.direction)
-            if (url) urls[(p.direction || '').toLowerCase()] = url
-          }),
-        )
-        if (runId.current !== myRun) {
-          for (const url of Object.values(urls)) {
-            try {
-              URL.revokeObjectURL(url)
-            } catch {
-              /* ignore */
-            }
-          }
-          return
-        }
-      }
-      plog('photo urls ready', Object.keys(urls))
+      plog('case loaded', loaded.id, 'status', loaded.status)
 
       const address =
         loaded.property?.address ||
@@ -273,8 +233,6 @@ function App() {
         })
       }
 
-      photoUrlsRef.current = urls
-      setResumedPhotoUrls(urls)
       setActiveCase(loaded)
     } catch (err) {
       if (runId.current !== myRun) return
@@ -302,32 +260,11 @@ function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // When resuming a saved case, seed NextStepCard so it continues on that case.
-  // A completed/submitted case carries its sharpened assessment + photos in
-  // `assessment` (the boundary read lives separately in boundary_assessment).
-  const resumedComplete =
-    activeCase?.status === 'ANALYSIS_COMPLETE' ||
-    activeCase?.status === 'SUBMITTED_TO_ASSESSOR'
-  const resumedSharpened = resumedComplete ? activeCase.assessment : null
-  const resumedPhotos = activeCase?.photos?.length
-    ? activeCase.photos.map((p) => ({
-        intended_direction: p.direction,
-        image: resumedPhotoUrls[(p.direction || '').toLowerCase()] || null,
-      }))
-    : null
-  if (resumedPhotos) {
-    plog(
-      'handoff -> NextStepCard initialPhotos',
-      resumedPhotos.map((p) => ({ dir: p.intended_direction, hasImage: Boolean(p.image) })),
-    )
-  }
-
   // SAFETY: the single property headline governs to the WORST read present —
-  // point (or photo-sharpened point in `result`), the live sharpened read, and
-  // the boundary edge read — so it never sits below any individual panel.
+  // the point read (in `result`) and the boundary edge read — so it never sits
+  // below any individual panel.
   const headlineRating = worstBalRating([
     result?.bal_rating,
-    sharpenedRating,
     boundarySession?.boundaryResult?.bal_rating,
   ])
 
@@ -347,7 +284,7 @@ function App() {
         <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
           <AppHeader onBack={goToEntry} onMyProperties={openDashboard} />
           <main style={{ flex: 1 }}>
-            <Dashboard onOpenCase={handleOpenCase} onNewAssessment={goToEntry} />
+            <Dashboard onOpenCase={handleOpenCase} onNewAssessment={goToEntry} onCaseDeleted={handleCaseDeleted} />
           </main>
         </div>
       ) : showEntry ? (
@@ -461,20 +398,12 @@ function App() {
                       initialPolygon={boundarySession?.polygon || null}
                       initialCaseId={boundarySession?.caseId || activeCase?.id || null}
                       onBoundarySaved={handleBoundarySaved}
+                      onBoundaryCleared={handleBoundaryCleared}
                       onHoverSide={setHighlightedSide}
                     />
                   </Reveal>
                   <Reveal delay={120}>
-                    <NextStepCard
-                      key={activeCase?.id || result.matched_address || result.address}
-                      result={result}
-                      overrides={overrides}
-                      initialCaseId={activeCase?.id || boundarySession?.caseId || null}
-                      caseStatus={activeCase?.status || null}
-                      initialSharpened={resumedSharpened}
-                      initialPhotos={resumedPhotos}
-                      onSharpened={(data) => setSharpenedRating(data?.bal_rating)}
-                    />
+                    <AssessorHandoffCard />
                   </Reveal>
                 </div>
               </div>

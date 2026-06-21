@@ -25,6 +25,14 @@ export default function Glyph({ name, size = 20, stroke = 1.8, style }) {
       </g>
     ),
     check: <path d="M5 12.5 L10 17.5 L19 6.5" {...p} />,
+    trash: (
+      <g {...p}>
+        <path d="M4 6.5 H20" />
+        <path d="M9.5 6.5 V5 a1 1 0 0 1 1 -1 h3 a1 1 0 0 1 1 1 V6.5" />
+        <path d="M6.5 6.5 L7.4 19 a2 2 0 0 0 2 1.9 h4.2 a2 2 0 0 0 2 -1.9 L16.5 6.5" />
+        <path d="M10 10 V17 M14 10 V17" />
+      </g>
+    ),
     camera: (
       <g {...p}>
         <rect x="3.5" y="7" width="17" height="12" rx="2.5" />
@@ -44,6 +52,12 @@ export default function Glyph({ name, size = 20, stroke = 1.8, style }) {
         <path d="M6 11.5 H5.5 a1.5 1.5 0 0 0 -1.5 1.5 v5.5 a1.5 1.5 0 0 0 1.5 1.5 h13 a1.5 1.5 0 0 0 1.5 -1.5 v-5.5 a1.5 1.5 0 0 0 -1.5 -1.5 H18" />
       </g>
     ),
+    upload: (
+      <g {...p}>
+        <path d="M12 15 V4 M8 7.5 L12 4 L16 7.5" />
+        <path d="M5 14 v4 a1.5 1.5 0 0 0 1.5 1.5 h11 a1.5 1.5 0 0 0 1.5 -1.5 v-4" />
+      </g>
+    ),
     refresh: (
       <g {...p}>
         <path d="M19 12 a7 7 0 1 1 -2.2 -5.1" />
@@ -61,6 +75,13 @@ export default function Glyph({ name, size = 20, stroke = 1.8, style }) {
         <circle cx="12" cy="12" r="8.5" />
         <path d="M12 11v5.5" />
         <circle cx="12" cy="7.6" r="1.1" fill="currentColor" stroke="none" />
+      </g>
+    ),
+    help: (
+      <g {...p}>
+        <circle cx="12" cy="12" r="8.5" />
+        <path d="M9.6 9.4 a2.5 2.5 0 1 1 3.1 2.6 c-0.8 0.3 -1.2 0.8 -1.2 1.5 v0.3" />
+        <circle cx="12" cy="16.4" r="1.05" fill="currentColor" stroke="none" />
       </g>
     ),
     warn: (
