@@ -7,9 +7,11 @@ const STATUS_META = {
   ANALYSIS_COMPLETE: { label: 'Analysis complete', fg: 'var(--euc-deep)', bg: 'color-mix(in oklab, var(--euc) 20%, transparent)' },
   SUBMITTED_TO_ASSESSOR: { label: 'Submitted', fg: '#7a5418', bg: 'color-mix(in oklab, var(--ochre) 22%, transparent)' },
   UNDER_REVIEW: { label: 'Under review', fg: '#7a5418', bg: 'color-mix(in oklab, var(--ochre) 22%, transparent)' },
+  NEEDS_MORE_PHOTOS: { label: 'More photos needed', fg: '#7a2418', bg: 'color-mix(in oklab, #b3402c 16%, transparent)' },
   CHANGES_REQUESTED: { label: 'Changes requested', fg: '#7a2418', bg: 'color-mix(in oklab, #b3402c 16%, transparent)' },
   SITE_VISIT_REQUIRED: { label: 'Site visit required', fg: '#7a5418', bg: 'color-mix(in oklab, var(--ochre) 22%, transparent)' },
   REFERRED_SPECIALIST: { label: 'Referred to specialist', fg: '#7a5418', bg: 'color-mix(in oklab, var(--ochre) 22%, transparent)' },
+  READY_TO_SIGN: { label: 'Ready to sign', fg: 'var(--euc-deep)', bg: 'color-mix(in oklab, var(--euc) 20%, transparent)' },
   APPROVED: { label: 'Approved', fg: 'var(--euc-deep)', bg: 'color-mix(in oklab, var(--euc) 20%, transparent)' },
   COMPLETE: { label: 'Complete', fg: 'var(--euc-deep)', bg: 'color-mix(in oklab, var(--euc) 20%, transparent)' },
 }

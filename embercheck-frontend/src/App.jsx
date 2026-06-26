@@ -7,6 +7,7 @@ import ResultPanel from './components/ResultPanel'
 import DrivingFactors from './components/DrivingFactors'
 import BoundaryStepCard from './components/BoundaryStepCard'
 import AssessorHandoffCard from './components/AssessorHandoffCard'
+import AssessorRegistration from './components/AssessorRegistration'
 import LoadingState from './components/LoadingState'
 import ContourField from './components/ui/ContourField'
 import Glyph from './components/ui/Glyph'
@@ -27,6 +28,7 @@ const NO_OVERRIDES = { fireDanger: null, slope: null }
 function parseHash() {
   const h = typeof window === 'undefined' ? '' : window.location.hash || ''
   if (h === '#/dashboard') return { view: 'dashboard', caseId: null }
+  if (h === '#/become-assessor') return { view: 'register-assessor', caseId: null }
   const m = h.match(/^#\/cases\/(.+)$/)
   if (m) return { view: 'home', caseId: decodeURIComponent(m[1]) }
   return { view: 'home', caseId: null }
@@ -69,7 +71,9 @@ function App() {
     () => typeof window !== 'undefined' && Boolean(getRefreshToken()),
   )
   const [view, setView] = useState(() =>
-    hasSession && bootIntent.view === 'dashboard' ? 'dashboard' : 'home',
+    hasSession && (bootIntent.view === 'dashboard' || bootIntent.view === 'register-assessor')
+      ? bootIntent.view
+      : 'home',
   )
   const [activeCase, setActiveCase] = useState(null)
   const [resuming, setResuming] = useState(
@@ -191,6 +195,17 @@ function App() {
     setHash('#/dashboard')
   }
 
+  // Open the "Become an accredited assessor" screen. Mirrors openDashboard: a
+  // logged-in-only view; the screen itself decides form vs. status from
+  // GET /assessor/me.
+  async function openRegisterAssessor() {
+    const ok = await ensureAuthenticated()
+    if (!ok) return
+    resetResultState()
+    setView('register-assessor')
+    setHash('#/become-assessor')
+  }
+
   // New assessment / back to entry from the dashboard.
   function goToEntry() {
     resetResultState()
@@ -279,10 +294,18 @@ function App() {
         <ContourField lines={14} amp={34} />
       </div>
 
-      {view === 'dashboard' ? (
+      {view === 'register-assessor' ? (
+        /* ───────── Become an accredited assessor ───────── */
+        <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+          <AppHeader onBack={goToEntry} onMyProperties={openDashboard} onBecomeAssessor={openRegisterAssessor} />
+          <main style={{ flex: 1 }}>
+            <AssessorRegistration onBackToDashboard={openDashboard} />
+          </main>
+        </div>
+      ) : view === 'dashboard' ? (
         /* ───────── Dashboard / My Properties ───────── */
         <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-          <AppHeader onBack={goToEntry} onMyProperties={openDashboard} />
+          <AppHeader onBack={goToEntry} onMyProperties={openDashboard} onBecomeAssessor={openRegisterAssessor} />
           <main style={{ flex: 1 }}>
             <Dashboard onOpenCase={handleOpenCase} onNewAssessment={goToEntry} onCaseDeleted={handleCaseDeleted} />
           </main>
@@ -290,7 +313,7 @@ function App() {
       ) : showEntry ? (
         /* ───────── Entry / hero ───────── */
         <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
-          <AppHeader onMyProperties={openDashboard} />
+          <AppHeader onMyProperties={openDashboard} onBecomeAssessor={openRegisterAssessor} />
           <main
             style={{
               flex: 1,
@@ -306,7 +329,7 @@ function App() {
       ) : (
         <>
       {/* header */}
-      <AppHeader sticky onBack={handleBack} onMyProperties={openDashboard} />
+      <AppHeader sticky onBack={handleBack} onMyProperties={openDashboard} onBecomeAssessor={openRegisterAssessor} />
 
       <main
         className="ec-shell-pad"
@@ -403,7 +426,7 @@ function App() {
                     />
                   </Reveal>
                   <Reveal delay={120}>
-                    <AssessorHandoffCard />
+                    <AssessorHandoffCard caseId={boundarySession?.caseId || activeCase?.id || null} />
                   </Reveal>
                 </div>
               </div>

@@ -21,9 +21,14 @@ class CaseStatus(str, Enum):
     ANALYSIS_COMPLETE = "ANALYSIS_COMPLETE"
     SUBMITTED_TO_ASSESSOR = "SUBMITTED_TO_ASSESSOR"
     UNDER_REVIEW = "UNDER_REVIEW"
-    CHANGES_REQUESTED = "CHANGES_REQUESTED"
+    # The assessor review lifecycle (CONSOLE-B3.2). NEEDS_MORE_PHOTOS supersedes
+    # the legacy CHANGES_REQUESTED; READY_TO_SIGN supersedes APPROVED. Both legacy
+    # values are kept below for back-compat with any already-stored cases.
+    NEEDS_MORE_PHOTOS = "NEEDS_MORE_PHOTOS"
     SITE_VISIT_REQUIRED = "SITE_VISIT_REQUIRED"
     REFERRED_SPECIALIST = "REFERRED_SPECIALIST"
+    READY_TO_SIGN = "READY_TO_SIGN"
+    CHANGES_REQUESTED = "CHANGES_REQUESTED"
     APPROVED = "APPROVED"
     COMPLETE = "COMPLETE"
 
@@ -91,6 +96,13 @@ class SectorOverrides(BaseModel):
     distance_m: float | None = None
     effective_slope_degrees: float | None = None
     slope_direction: str | None = None
+    # Per-side FDI override (assessor/console surface only). FDI is site-level by
+    # AS 3959, so this is the deliberate console exception — used only to recompute
+    # THIS side's BAL band. None = use the site/LGA FDI.
+    fire_danger_index: int | None = None
+    # The typed justification the assessor must supply for any override (console
+    # surface). Mandatory whenever an override exists; part of the audit record.
+    reason: str | None = None
     override_by: str | None = None
     override_at: datetime | None = None
 
@@ -113,6 +125,32 @@ class SectorEvidence(BaseModel):
     review_flags: list[str] = Field(default_factory=list)
     final_bal: str | None = None
     analysis_status: str | None = None
+    # Assessor review state (console). reviewed=True once an assessor has confirmed
+    # or overridden this side; reviewed_by/at record who/when.
+    reviewed: bool = False
+    reviewed_by: str | None = None
+    reviewed_at: datetime | None = None
+
+    def invalidate_review(self) -> bool:
+        """Drop any prior assessor review of this side and report whether one was
+        cleared.
+
+        An assessor's review (confirm/override) attests to a SPECIFIC state of the
+        side's evidence. The moment that evidence changes underneath them — new or
+        deleted photos, a consumer override, a re-assessed boundary draft — the
+        attestation is stale and the side MUST be re-reviewed before sign-off.
+
+        This is the single source of that rule: every consumer-side mutation of a
+        side's evidence calls it, so the Console's Confirm action re-enables and the
+        derived review_progress / checklist / sign-off blockers reflect reality
+        instead of a confirmation that no longer matches what's on the case.
+        """
+        if not (self.reviewed or self.reviewed_by or self.reviewed_at):
+            return False
+        self.reviewed = False
+        self.reviewed_by = None
+        self.reviewed_at = None
+        return True
 
 
 class Case(Document):
@@ -141,14 +179,32 @@ class Case(Document):
     photos: list[CasePhoto] = Field(default_factory=list)
     status: CaseStatus = CaseStatus.DRAFT
 
+    # Assessor review workflow (CONSOLE-B3.2). The CURRENT review reason the
+    # consumer sees (e.g. why more photos / a site visit are needed). The full,
+    # immutable history of every reason lives in CaseAuditEvent — this is only the
+    # latest, so the consumer-facing case read has something to display. Cleared
+    # when the assessor resumes review (back to UNDER_REVIEW) or marks ready to sign.
+    review_reason: str | None = None
+    # The compass sides the assessor asked the consumer to re-photograph (only
+    # meaningful while status == NEEDS_MORE_PHOTOS). Empty = "any/all sides".
+    photo_request_sides: list[str] = Field(default_factory=list)
+
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     # Set when the case is submitted for accredited assessment (Step 5b-i).
     submitted_at: datetime | None = None
+
+    # Assignment (Phase 5). The assessor (User.id) the consumer chose to review
+    # this case, set on submit. None = unassigned: legacy/global behaviour where
+    # any in-jurisdiction assessor could see it (dual-read, so pre-assignment
+    # cases keep working). assigned_at records when the choice was made.
+    assigned_assessor_id: PydanticObjectId | None = None
+    assigned_at: datetime | None = None
 
     class Settings:
         name = "cases"
         indexes = [
             IndexModel("user_id"),
             IndexModel("status"),
+            IndexModel("assigned_assessor_id"),
         ]

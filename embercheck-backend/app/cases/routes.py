@@ -11,19 +11,26 @@ from pathlib import Path
 
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
+from beanie import PydanticObjectId
+from bson.errors import InvalidId
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 
 from app.auth.backend import current_active_user
 from app.cases.service import (
     COMPASS_SIDES,
     build_or_merge_sector_evidence,
+    derive_state,
     get_owned_case_or_404,
     polygon_coordinates,
+    recompute_case_headline,
     worst_read,
 )
+from app.models.assessor_profile import AssessorProfile, AssessorStatus
+from app.schemas.assessor import AssessorSearchResult
 from app.config import settings as media_settings
 from app.models.assessment import AssessmentRequest
+from app.models.audit import AuditChange, CaseAuditEvent
 from app.models.case import Case, CaseStatus, PropertyInfo, SectorEvidence, SectorOverrides, SectorPhoto
 from app.models.user import User
 
@@ -35,6 +42,7 @@ from app.schemas.case import (
     CaseRead,
     CaseSummary,
     SectorOverrideRequest,
+    SubmitRequest,
 )
 from app.services.assessment_pipeline import run_assessment, reconcile_all_sectors
 from app.services.sector_classifier import classify_and_combine
@@ -181,6 +189,48 @@ async def get_case(
     owned by someone else all return 404."""
     case = await get_owned_case_or_404(case_id, user.id)
     return CaseRead.from_case(case)
+
+
+@router.get("/{case_id}/assessors", response_model=list[AssessorSearchResult])
+async def list_assessors_for_case(
+    case_id: str,
+    user: User = Depends(current_active_user),
+):
+    """Assessors a consumer may choose for THIS case (Phase 4 — read-only).
+
+    State-level match: the case's derived state (NSW today) against the
+    assessor's `operating_states`. Returns only APPROVED assessors who are
+    accepting new work; suspended/rejected/pending and opted-out assessors are
+    excluded. No distance/rating/turnaround yet (no geo, no job history). An
+    unresolved state (no NSW signal) returns an empty list rather than every
+    assessor. Choosing/assignment lands in Phase 5 — this only lists."""
+    case = await get_owned_case_or_404(case_id, user.id)
+    state = derive_state(case)
+    if not state:
+        return []
+
+    profiles = await AssessorProfile.find(
+        AssessorProfile.status == AssessorStatus.APPROVED,
+        AssessorProfile.accepting_new_work == True,  # noqa: E712 (Beanie query expr)
+        AssessorProfile.operating_states == state,  # array-contains in Mongo
+    ).to_list()
+
+    results = [
+        AssessorSearchResult(
+            assessor_id=str(p.user_id),
+            business_name=p.business_name,
+            legal_name=" ".join(
+                part for part in (p.legal_first_name, p.legal_last_name) if part
+            ) or None,
+            accreditation_level=p.accreditation_level,
+            accreditation_number=p.accreditation_number,
+            operating_states=p.operating_states,
+            accepting_new_work=p.accepting_new_work,
+        )
+        for p in profiles
+    ]
+    results.sort(key=lambda r: (r.business_name or r.legal_name or "").lower())
+    return results
 
 
 @router.delete("/{case_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -398,26 +448,21 @@ async def _run_sector_analysis(case_id: str, compass_side: str) -> None:
     # --- Stage 2: reconcile. A failure here marks "error" but the VLM
     # results saved in stage 1 are already persisted and stay that way. ---
     try:
-        headline_bal = None
         if case.boundary_assessment and case.sector_evidence:
-            headline_bal = reconcile_all_sectors(
+            reconcile_all_sectors(
                 case.sector_evidence, case.boundary_assessment, surface="consumer",
             )
+            # Recompute the headline from scratch (raise OR lower) so the current
+            # assessment is reflected after analysis completes.
+            recompute_case_headline(case)
         # Re-resolve again: reconcile_all_sectors mutates case.sector_evidence
         # in place (no save happened yet), so side_ev is still valid here -
         # but re-resolving is cheap and removes any doubt.
         side_ev = _find_side(case, compass_side)
         _analysis_log.info(
             "RECONCILE case=%s side=%s final_bal=%s headline_bal=%s",
-            case_id, compass_side, side_ev.final_bal if side_ev else None, headline_bal,
+            case_id, compass_side, side_ev.final_bal if side_ev else None, case.bal_rating,
         )
-
-        if headline_bal:
-            from app.services.assessment_pipeline import BAL_SEVERITY
-            current_sev = BAL_SEVERITY.get(case.bal_rating, -1)
-            new_sev = BAL_SEVERITY.get(headline_bal, -1)
-            if new_sev > current_sev:
-                case.bal_rating = headline_bal
 
         if side_ev:
             side_ev.analysis_status = "complete"
@@ -502,19 +547,59 @@ async def upload_sector_photos(
         case.sector_evidence.append(side_ev)
     side_ev.photos.extend(new_photos)
     side_ev.analysis_status = "pending"
+    # New evidence invalidates any prior assessor review of THIS side (see
+    # SectorEvidence.invalidate_review): the photo the assessor confirmed is no
+    # longer the whole story, so the side re-opens for review.
+    side_ev.invalidate_review()
+
+    # CONSOLE-B3.3 automatic review resume (§5): if the assessor had asked for more
+    # photos and the consumer has now supplied evidence for a requested side (or for
+    # ANY side when the request named none), clear the open photo request and send
+    # the case straight back to the assessor's In-review worklist. An immutable audit
+    # event records the automatic transition. NEEDS_MORE_PHOTOS supersedes the legacy
+    # CHANGES_REQUESTED; both resume here.
+    requested = case.photo_request_sides or []
+    review_resumed = case.status in (CaseStatus.NEEDS_MORE_PHOTOS, CaseStatus.CHANGES_REQUESTED) and (
+        not requested or compass_side in requested
+    )
+    if review_resumed:
+        case.status = CaseStatus.UNDER_REVIEW
+        case.review_reason = None
+        case.photo_request_sides = []
 
     case.updated_at = now
     await case.save()
 
+    if review_resumed:
+        await CaseAuditEvent(
+            case_id=case.id,
+            assessor_id=None,
+            assessor_email="System",
+            compass_side=None,
+            kind="auto_resume",
+            changes=[AuditChange(field="status", previous="NEEDS_MORE_PHOTOS", new="UNDER_REVIEW")],
+            reason=None,
+        ).insert()
+
     background_tasks.add_task(_run_sector_analysis, str(case.id), compass_side)
     _analysis_log.info(
-        "SCHEDULED case=%s side=%s new_photos=%d", case.id, compass_side, len(new_photos),
+        "SCHEDULED case=%s side=%s new_photos=%d resumed=%s",
+        case.id, compass_side, len(new_photos), review_resumed,
     )
 
     return {
         "compass_side": compass_side,
         "photos": [p.model_dump() for p in side_ev.photos],
         "analysis_status": "pending",
+        # §5 consumer-facing acknowledgement — shown when the upload auto-returned
+        # the case to the assessor. False/empty for an ordinary (non-requested) upload.
+        "review_resumed": review_resumed,
+        "status": case.status,
+        "message": (
+            "Additional evidence submitted. Your assessor has been notified."
+            if review_resumed
+            else None
+        ),
     }
 
 
@@ -605,14 +690,15 @@ async def delete_sector_photo(
     side_ev.combined_reasoning = reasoning
     side_ev.review_flags = flags
     side_ev.analysis_status = "complete" if remaining else None
+    # The evidence the assessor reviewed has changed — re-open the side.
+    side_ev.invalidate_review()
 
-    # Re-run reconcile.
+    # Re-run reconcile, then recompute the headline from scratch (raise OR lower).
     if case.boundary_assessment and case.sector_evidence:
-        headline_bal = reconcile_all_sectors(
+        reconcile_all_sectors(
             case.sector_evidence, case.boundary_assessment, surface="consumer",
         )
-        if headline_bal:
-            case.bal_rating = headline_bal
+        recompute_case_headline(case)
 
     case.updated_at = datetime.now(timezone.utc)
     await case.save()
@@ -626,6 +712,9 @@ async def delete_sector_photo(
         "review_flags": side_ev.review_flags,
         "final_bal": side_ev.final_bal,
         "analysis_status": side_ev.analysis_status,
+        # Current case headline so the consumer can update without a refetch.
+        "bal_rating": case.bal_rating,
+        "governing_direction": case.governing_direction,
     }
 
 
@@ -653,13 +742,17 @@ def _get_or_create_side(case: Case, compass_side: str) -> SectorEvidence:
     return side_ev
 
 
-def _side_override_response(compass_side: str, side_ev: SectorEvidence) -> dict:
+def _side_override_response(compass_side: str, side_ev: SectorEvidence, case: Case) -> dict:
     return {
         "compass_side": compass_side,
         "overrides": side_ev.overrides.model_dump() if side_ev.overrides else None,
         "combined_classification": side_ev.combined_classification,
         "review_flags": side_ev.review_flags,
         "final_bal": side_ev.final_bal,
+        # Current case headline (raise OR lower) so the consumer updates its
+        # displayed assessment without re-reading the whole case.
+        "bal_rating": case.bal_rating,
+        "governing_direction": case.governing_direction,
     }
 
 
@@ -719,23 +812,22 @@ async def set_sector_override(
         override_by=str(user.id),
         override_at=datetime.now(timezone.utc),
     )
+    # A consumer override changes this side's inputs — invalidate any assessor review.
+    side_ev.invalidate_review()
 
     if case.boundary_assessment and case.sector_evidence:
-        headline_bal = reconcile_all_sectors(
+        reconcile_all_sectors(
             case.sector_evidence, case.boundary_assessment, surface="consumer",
         )
-        if headline_bal:
-            from app.services.assessment_pipeline import BAL_SEVERITY
-            current_sev = BAL_SEVERITY.get(case.bal_rating, -1)
-            new_sev = BAL_SEVERITY.get(headline_bal, -1)
-            if new_sev > current_sev:
-                case.bal_rating = headline_bal
+        # Recompute the headline from scratch (raise OR lower) so it always
+        # reflects the current assessment, not only ratcheting up.
+        recompute_case_headline(case)
 
     case.updated_at = datetime.now(timezone.utc)
     await case.save()
 
     fresh = _get_or_create_side(case, compass_side)
-    return _side_override_response(compass_side, fresh)
+    return _side_override_response(compass_side, fresh, case)
 
 
 @router.delete("/{case_id}/sectors/{compass_side}/override")
@@ -755,59 +847,85 @@ async def clear_sector_override(
     case = await get_owned_case_or_404(case_id, user.id)
     side_ev = _get_or_create_side(case, compass_side)
     side_ev.overrides = None
+    # Clearing the override changes this side's inputs — invalidate any assessor review.
+    side_ev.invalidate_review()
 
     if case.boundary_assessment and case.sector_evidence:
-        headline_bal = reconcile_all_sectors(
+        reconcile_all_sectors(
             case.sector_evidence, case.boundary_assessment, surface="consumer",
         )
-        if headline_bal:
-            from app.services.assessment_pipeline import BAL_SEVERITY
-            current_sev = BAL_SEVERITY.get(case.bal_rating, -1)
-            new_sev = BAL_SEVERITY.get(headline_bal, -1)
-            if new_sev > current_sev:
-                case.bal_rating = headline_bal
-        # A cleared override may LOWER this side back toward draft (e.g. the
-        # override had raised it); the headline itself must still never sit
-        # below any other side's final_bal, so recompute it from scratch as
-        # the worst final_bal across all sides rather than only ratcheting up.
-        rated = [
-            ev for ev in case.sector_evidence
-            if ev.final_bal and ev.final_bal in BAL_SEVERITY
-        ]
-        if rated:
-            case.bal_rating = max(rated, key=lambda ev: BAL_SEVERITY[ev.final_bal]).final_bal
+        # A cleared override may LOWER this side back toward draft; recompute the
+        # headline from scratch (raise OR lower) as the worst current read.
+        recompute_case_headline(case)
 
     case.updated_at = datetime.now(timezone.utc)
     await case.save()
 
     fresh = _get_or_create_side(case, compass_side)
-    return _side_override_response(compass_side, fresh)
+    return _side_override_response(compass_side, fresh, case)
+
+
+async def _resolve_chosen_assessor(assessor_id: str, state: str | None) -> PydanticObjectId:
+    """Validate the consumer's chosen assessor and return their User id. The
+    assessor must have an APPROVED profile, be accepting new work, and cover the
+    case's state — the same filter GET /cases/{id}/assessors applies, re-checked
+    server-side so a stale/forged choice can't assign to an ineligible assessor."""
+    try:
+        oid = PydanticObjectId(assessor_id)
+    except (InvalidId, ValueError, TypeError):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid assessor selection.")
+    profile = await AssessorProfile.find_one(AssessorProfile.user_id == oid)
+    if (
+        profile is None
+        or profile.status != AssessorStatus.APPROVED
+        or not profile.accepting_new_work
+        or (state is not None and state not in profile.operating_states)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="That assessor isn't available for this case.",
+        )
+    return oid
 
 
 @router.post("/{case_id}/submit", response_model=CaseRead)
 async def submit_case(
     case_id: str,
+    body: SubmitRequest = Body(default=SubmitRequest()),
     user: User = Depends(current_active_user),
 ):
-    """Submit a completed case for accredited assessment (status transition
-    only). Allowed from ANALYSIS_COMPLETE; idempotent if already submitted; a
-    still-DRAFT case (analysis not done) is rejected with 409."""
+    """Submit a case for accredited assessment, assigning it to the chosen
+    assessor (Phase 5). `assessor_id` (from GET /cases/{id}/assessors) assigns the
+    case to that assessor; omitting it submits unassigned (legacy global). Allowed
+    from DRAFT or ANALYSIS_COMPLETE; idempotent if already submitted (re-supplying
+    an assessor_id re-assigns). Cases already in the assessor's review lifecycle
+    (UNDER_REVIEW etc.) are rejected with 409."""
     case = await get_owned_case_or_404(case_id, user.id)
 
-    # Already submitted -> return current state (idempotent).
-    if case.status == CaseStatus.SUBMITTED_TO_ASSESSOR:
-        return CaseRead.from_case(case)
-
-    # Only a completed analysis can be submitted.
-    if case.status != CaseStatus.ANALYSIS_COMPLETE:
+    submittable = {
+        CaseStatus.DRAFT,
+        CaseStatus.ANALYSIS_COMPLETE,
+        CaseStatus.SUBMITTED_TO_ASSESSOR,  # idempotent / allow (re)assignment
+    }
+    if case.status not in submittable:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Complete the photo analysis before submitting.",
+            detail="This case is already with an assessor and can't be re-submitted.",
         )
 
     now = datetime.now(timezone.utc)
-    case.status = CaseStatus.SUBMITTED_TO_ASSESSOR
-    case.submitted_at = now
+
+    # Resolve + assign the chosen assessor (validated against the same filter as
+    # the search), if one was supplied.
+    if body.assessor_id:
+        case.assigned_assessor_id = await _resolve_chosen_assessor(
+            body.assessor_id, derive_state(case)
+        )
+        case.assigned_at = now
+
+    if case.status != CaseStatus.SUBMITTED_TO_ASSESSOR:
+        case.status = CaseStatus.SUBMITTED_TO_ASSESSOR
+        case.submitted_at = now
     case.updated_at = now
     await case.save()
     return CaseRead.from_case(case)

@@ -295,11 +295,27 @@ def reconcile_sector_bal(
         return
 
     if override_sev < pre_sev:
-        # Override LESS hazardous -> keep the higher of (photos/draft);
-        # never lower on the consumer surface. Flag for review either way -
-        # an assessor should confirm a downgrade even on console.
+        # Override LESS hazardous than what photos/draft would give. Flagged for
+        # review on either surface.
         if "override_lower_than_draft_review" not in flags:
             flags.append("override_lower_than_draft_review")
+        if surface == "console":
+            # Console (assessor surface): the accredited assessor is the
+            # authority and may replace the automated interpretation, so APPLY
+            # the lower override - band the override class at this side's
+            # geometry (the same banding the raise path uses; no separate BAL
+            # path). Still flagged for defensibility. Consumer is unaffected.
+            bal_rating, _used_candidate = _band_class_against_side(
+                veg_class=override, side_transect=side_transect, fdi=fdi,
+                slope_deg=slope_deg, distance_m=distance_m, veg_found=veg_found,
+            )
+            if bal_rating == "review_required_unassessable":
+                if "override_vegetation_no_distance_review" not in flags:
+                    flags.append("override_vegetation_no_distance_review")
+            sector_ev.final_bal = bal_rating
+            sector_ev.review_flags = flags
+            return
+        # Consumer surface: never lower - keep the higher (photos/draft) value.
         sector_ev.final_bal = pre_final_bal
         sector_ev.review_flags = flags
         return

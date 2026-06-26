@@ -161,6 +161,10 @@ function SectorPhotos({ caseId, compassSide, sectorEvidence, onEvidenceUpdate })
               review_flags: ev.review_flags,
               final_bal: ev.final_bal,
               analysis_status: ev.analysis_status,
+              // Current case headline (raise OR lower) after analysis completed,
+              // so the panel's overall BAL reflects the latest assessment.
+              bal_rating: updated.bal_rating,
+              governing_direction: updated.governing_direction,
             })
             break
           }
@@ -914,6 +918,10 @@ export default function BoundaryResultPanel({
   caseId = null,
   sectorEvidence = null,
   variant = 'summary',
+  // The CURRENT case headline ({ bal_rating, governing_direction }) — the same
+  // authoritative value the Console shows. The panel displays this (not the
+  // immutable boundary_assessment draft) and keeps it live as sides are updated.
+  caseHeadline = null,
   // Optional action rendered INSIDE the card, below the headline (e.g. the
   // main-page "View" button). Keeps the action visually part of the result card.
   action = null,
@@ -924,14 +932,23 @@ export default function BoundaryResultPanel({
   // Declared BEFORE the early return so it adds no new rules-of-hooks finding;
   // the existing post-return hooks remain the known pre-existing issue.
   const [resetNonce, setResetNonce] = useState(0)
+  // Live current headline, updated from every override/photo/reset response
+  // (which now carry bal_rating). Declared BEFORE the early return (like
+  // resetNonce) so it adds no new rules-of-hooks finding.
+  const [headline, setHeadline] = useState(null)
 
   if (!result) return null
 
   const [localEvidence, setLocalEvidence] = useState(sectorEvidence)
   useEffect(() => { setLocalEvidence(sectorEvidence) }, [sectorEvidence])
 
+  const draftBal = result.bal_rating
+  const currentBal = headline?.bal_rating || caseHeadline?.bal_rating || draftBal
+  const currentGoverning = headline?.governing_direction || caseHeadline?.governing_direction || result.governing_direction
+  const overridden = currentBal !== draftBal
+
   const summaries = buildSideSummaries(result)
-  const tone = balToneColor(result.bal_rating)
+  const tone = balToneColor(currentBal)
   const eyebrow = variant === 'summary' ? '3' : null
   const evidenceBySide = {}
   if (localEvidence) {
@@ -939,6 +956,14 @@ export default function BoundaryResultPanel({
   }
 
   const handleEvidenceUpdate = useCallback((compassSide, uploadResult) => {
+    // Every override / reset / delete / poll response now carries the CURRENT
+    // case headline — adopt it so the overall BAL stays in sync (raise OR lower).
+    if (uploadResult && 'bal_rating' in uploadResult && uploadResult.bal_rating) {
+      setHeadline({
+        bal_rating: uploadResult.bal_rating,
+        governing_direction: uploadResult.governing_direction,
+      })
+    }
     setLocalEvidence(prev => {
       if (!prev) return prev
       return prev.map(ev =>
@@ -1055,15 +1080,22 @@ export default function BoundaryResultPanel({
               color: tone,
             }}
           >
-            {result.bal_rating}
+            {currentBal}
           </span>
           <span style={{ fontSize: 13.5, color: 'var(--ink-soft)' }}>
             governed by{' '}
-            <strong style={{ color: 'var(--ink)' }}>{result.governing_direction}</strong>
+            <strong style={{ color: 'var(--ink)' }}>{currentGoverning}</strong>
           </span>
         </div>
+        {overridden && (
+          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--ink-soft)' }}>
+            Current indicative assessment ·{' '}
+            <span style={{ textDecoration: 'line-through' }}>original draft {draftBal}</span>{' '}
+            (kept for audit)
+          </div>
+        )}
         <p style={{ margin: '6px 0 0', fontSize: 14, lineHeight: 1.5, color: 'var(--ink)' }}>
-          {balDescription(result.bal_rating)}
+          {balDescription(currentBal)}
         </p>
 
         <div

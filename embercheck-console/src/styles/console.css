@@ -1,0 +1,125 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Design tokens + global classes — lifted VERBATIM from the EmberCheck Console
+   mockup bundle (its :root vars + .ec-press / .cs-card / .cs-mono / .cs-rowhover
+   / .cs-input). The worklist components reference these exactly as the mockup
+   did, so the result is pixel-identical.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --font-display: 'Alegreya Sans', 'Helvetica Neue', sans-serif;
+  --font-ui: 'Source Sans 3', 'Helvetica Neue', sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --paper: #efede2;
+  --panel: #f7f5eb;
+  --card: #f7f5eb;
+  --ink: #26271f;
+  --ink-soft: #5f6052;
+  --euc: #5e6b4f;
+  --euc-deep: #3c4733;
+  --ochre: #c28e3f;
+  --ochre-soft: #dcb877;
+  --line: rgba(38, 39, 31, 0.14);
+  --contour: rgba(140, 124, 80, 0.3);
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+body {
+  background: var(--paper);
+  font-family: var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+.ec-press {
+  transition: transform 0.12s ease;
+}
+.ec-press:active {
+  transform: scale(0.975);
+}
+
+.ec-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(38, 39, 31, 0.25) transparent;
+}
+.ec-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.ec-scroll::-webkit-scrollbar-thumb {
+  background: rgba(38, 39, 31, 0.2);
+  border-radius: 99px;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: color-mix(in oklab, var(--ink) 36%, transparent);
+}
+
+.cs-mono {
+  font-family: var(--font-mono);
+}
+.cs-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.cs-rowhover:hover {
+  background: color-mix(in oklab, var(--ink) 4%, transparent) !important;
+}
+.cs-input {
+  font-family: var(--font-ui);
+  font-size: 12.5px;
+  color: var(--ink);
+  background: #fdfcf6;
+  border: 1px solid color-mix(in oklab, var(--ink) 24%, transparent);
+  border-radius: 8px;
+  padding: 7px 10px;
+  outline: none;
+}
+.cs-input:focus {
+  border-color: var(--euc-deep);
+}
+
+/* Document-style table for the report preview (lifted from the mockup). */
+.cs-doctable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.cs-doctable th {
+  text-align: left;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-soft);
+  padding: 5px 8px;
+  border-bottom: 1.5px solid var(--ink);
+  white-space: nowrap;
+}
+.cs-doctable td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  vertical-align: top;
+}
+.cs-doctable .cs-mono {
+  font-size: 10.5px;
+}
+
+@keyframes ecSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ec-press {
+    transition: none !important;
+  }
+}

@@ -56,6 +56,15 @@ class SectorOverrideRequest(BaseModel):
     slope_direction: str | None = None
 
 
+class SubmitRequest(BaseModel):
+    """Submit a case for accredited assessment, optionally assigning it to the
+    assessor the consumer chose (Phase 5). assessor_id is the chosen assessor's
+    User id (from GET /cases/{id}/assessors). Omitted = submit unassigned (legacy
+    global behaviour)."""
+
+    assessor_id: str | None = None
+
+
 class BoundaryUpdateRequest(BaseModel):
     """Run/replace the BOUNDARY read on an existing case in place. Used by
     PUT /cases/{id}/boundary so an edited polygon updates the same case instead
@@ -86,12 +95,20 @@ class CaseRead(BaseModel):
     governing_vegetation: str | None = None
     photos: list[CasePhoto] = []
     sector_evidence: list[SectorEvidence] | None = None
+    # Assessor review workflow (CONSOLE-B3.2), surfaced read-only so the consumer
+    # can show the assessor's current request. The consumer cannot edit these.
+    review_reason: str | None = None
+    photo_request_sides: list[str] = []
     created_at: datetime
     updated_at: datetime
     submitted_at: datetime | None = None
+    # The assessor (User.id) this case is assigned to, if the consumer chose one
+    # on submit (Phase 5). None = unassigned.
+    assigned_assessor_id: str | None = None
 
     @classmethod
     def from_case(cls, case) -> "CaseRead":
+        assigned = getattr(case, "assigned_assessor_id", None)
         return cls(
             id=str(case.id),
             status=case.status,
@@ -103,9 +120,12 @@ class CaseRead(BaseModel):
             governing_vegetation=governing_vegetation(case),
             photos=case.photos,
             sector_evidence=case.sector_evidence,
+            review_reason=getattr(case, "review_reason", None),
+            photo_request_sides=getattr(case, "photo_request_sides", None) or [],
             created_at=case.created_at,
             updated_at=case.updated_at,
             submitted_at=case.submitted_at,
+            assigned_assessor_id=str(assigned) if assigned else None,
         )
 
 
@@ -121,6 +141,9 @@ class CaseSummary(BaseModel):
     # badge it without shipping the full assessment dict.
     has_boundary: bool = False
     status: CaseStatus
+    # Current assessor request (read-only) so the dashboard card can badge it.
+    review_reason: str | None = None
+    photo_request_sides: list[str] = []
     created_at: datetime
     updated_at: datetime
     submitted_at: datetime | None = None
@@ -136,6 +159,8 @@ class CaseSummary(BaseModel):
             governing_vegetation=governing_vegetation(case),
             has_boundary=bool(case.boundary_assessment),
             status=case.status,
+            review_reason=getattr(case, "review_reason", None),
+            photo_request_sides=getattr(case, "photo_request_sides", None) or [],
             created_at=case.created_at,
             updated_at=case.updated_at,
             submitted_at=case.submitted_at,

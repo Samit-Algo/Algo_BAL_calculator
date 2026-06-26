@@ -15,6 +15,22 @@ from app.services.assessment_pipeline import BAL_SEVERITY
 COMPASS_SIDES = ("North", "East", "South", "West")
 
 
+def derive_state(case: Case) -> str | None:
+    """The case's jurisdiction key (its STATE). EmberCheck's data sources are all
+    NSW, so a case is "NSW" when its address says so or it resolved an NSW LGA.
+    Mirrors console/routes.py:_derive_state (duplicated to keep the assessor
+    search additive — cases must not import from console); one place to change
+    for a future multi-state build is the goal of keeping it a derived helper."""
+    text = " ".join(
+        part for part in (case.property.matched_address, case.property.address) if part
+    ).upper()
+    if "NSW" in text:
+        return "NSW"
+    if case.property.lga:  # every LGA in our reference data is NSW
+        return "NSW"
+    return None
+
+
 def worst_read(*reads: dict | None) -> dict | None:
     """The worst (highest-BAL) read among those given, ignoring None.
 
@@ -28,6 +44,35 @@ def worst_read(*reads: dict | None) -> dict | None:
     if not present:
         return None
     return max(present, key=lambda r: BAL_SEVERITY.get(r["bal_rating"], -1))
+
+
+def recompute_case_headline(case: Case) -> None:
+    """Recompute the denormalised headline (``bal_rating`` + ``governing_direction``)
+    from the CURRENT state, raise OR lower, so it always reflects the latest
+    assessment after any boundary-side update (photo / override / reset).
+
+    The headline is the worst of: the worst reconciled boundary side
+    (``sector_evidence[*].final_bal``) and the point read (``case.assessment``).
+    This is pure denormalisation - it only picks the max over values already
+    computed by the reconciler; no BAL is calculated here. Replaces the older
+    ratchet-up-only update so a cleared/lowered override is reflected too."""
+    candidates: list[tuple[str, str | None]] = []
+
+    if case.sector_evidence:
+        rated = [ev for ev in case.sector_evidence if ev.final_bal in BAL_SEVERITY]
+        if rated:
+            worst = max(rated, key=lambda ev: BAL_SEVERITY[ev.final_bal])
+            candidates.append((worst.final_bal, worst.compass_side))
+
+    if case.assessment and case.assessment.get("bal_rating"):
+        candidates.append(
+            (case.assessment["bal_rating"], case.assessment.get("governing_direction"))
+        )
+
+    if candidates:
+        bal, governing = max(candidates, key=lambda c: BAL_SEVERITY.get(c[0], -1))
+        case.bal_rating = bal
+        case.governing_direction = governing
 
 
 async def get_owned_case_or_404(case_id: str, user_id: PydanticObjectId) -> Case:
@@ -130,6 +175,11 @@ def build_or_merge_sector_evidence(
         )
         prev = existing_by_side.get(side)
         if prev is not None:
+            # Re-assessing the boundary preserves attached evidence, but if this
+            # side's GIS draft actually moved, any prior assessor review of it is
+            # stale — re-open it (SectorEvidence.invalidate_review).
+            if prev.gis_draft_classification != draft_class:
+                prev.invalidate_review()
             prev.gis_draft_classification = draft_class
             result.append(prev)
         else:

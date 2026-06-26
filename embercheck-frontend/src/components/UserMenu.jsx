@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../auth/AuthContext'
 import Glyph from './ui/Glyph'
 
-export default function UserMenu({ onMyProperties }) {
+export default function UserMenu({ onMyProperties, onBecomeAssessor }) {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const [loggingOut, setLoggingOut] = useState(false)
@@ -177,6 +177,39 @@ export default function UserMenu({ onMyProperties }) {
                 <Glyph name="doc" size={16} />
               </span>
               My Properties
+            </button>
+          )}
+
+          {onBecomeAssessor && (
+            <button
+              type="button"
+              role="menuitem"
+              className="ec-press"
+              onClick={() => {
+                setOpen(false)
+                onBecomeAssessor()
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                width: '100%',
+                textAlign: 'left',
+                padding: '10px 10px',
+                borderRadius: 9,
+                border: 'none',
+                background: 'transparent',
+                cursor: 'pointer',
+                fontFamily: 'var(--font-ui)',
+                fontSize: 14,
+                fontWeight: 600,
+                color: 'var(--ink)',
+              }}
+            >
+              <span style={{ display: 'inline-flex', color: 'var(--ink-soft)' }}>
+                <Glyph name="check" size={16} />
+              </span>
+              Become an accredited assessor
             </button>
           )}
 

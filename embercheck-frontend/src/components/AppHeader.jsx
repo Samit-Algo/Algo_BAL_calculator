@@ -15,7 +15,7 @@ import UserMenu from './UserMenu'
 // Drop the wordmark tagline below this width so the header stays clean on phones.
 const TAGLINE_QUERY = '(min-width: 600px)'
 
-export default function AppHeader({ sticky = false, onBack = null, onMyProperties = null }) {
+export default function AppHeader({ sticky = false, onBack = null, onMyProperties = null, onBecomeAssessor = null }) {
   const { user, status, openAuthModal } = useAuth()
   const [showTagline, setShowTagline] = useState(
     () => (typeof window === 'undefined' ? true : window.matchMedia(TAGLINE_QUERY).matches),
@@ -86,7 +86,7 @@ export default function AppHeader({ sticky = false, onBack = null, onMyPropertie
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
           {status !== 'bootstrapping' &&
             (user ? (
-              <UserMenu onMyProperties={onMyProperties} />
+              <UserMenu onMyProperties={onMyProperties} onBecomeAssessor={onBecomeAssessor} />
             ) : (
               <button
                 type="button"

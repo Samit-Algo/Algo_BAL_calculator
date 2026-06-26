@@ -25,6 +25,9 @@ from app.auth.backend import current_active_user
 from app.auth.routes import router as auth_router
 from app.cases.routes import router as cases_router
 from app.cases.service import build_case_photos, get_owned_case_or_404, worst_read
+from app.console.routes import router as console_router
+from app.assessor.routes import router as assessor_router
+from app.admin.routes import router as admin_router
 
 logger = logging.getLogger("embercheck")
 
@@ -74,6 +77,20 @@ app.include_router(auth_router)
 # Cases (Phase 1, Step 3a): POST /cases (server-side assessment, login-only) and
 # GET /cases/{id} (owner-only). Deep analysis is gated on /assess/photos.
 app.include_router(cases_router)
+
+# Assessor Console (CONSOLE-B1): /console/me + /console/worklist, every route
+# assessor-only. Additive - no existing route is modified or gated here.
+app.include_router(console_router)
+
+# Assessor registration (Phase 2): /assessor/register, /assessor/documents,
+# /assessor/me. Login-only; creates a PENDING profile and grants NO access -
+# role is never touched here. Additive - no existing route is modified or gated.
+app.include_router(assessor_router)
+
+# Admin app (Phase 3): /admin/* — admin-only (current_admin). Reviews assessor
+# applications; approve is the ONLY action that grants assessor access (sets
+# status=APPROVED + role=assessor in lockstep). Every action is audited.
+app.include_router(admin_router)
 
 
 @app.get("/health")

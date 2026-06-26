@@ -12,6 +12,9 @@ from pymongo.asynchronous.database import AsyncDatabase
 from beanie import init_beanie
 
 from app.core.config import settings
+from app.models.admin_audit import AdminAuditEvent
+from app.models.assessor_profile import AssessorProfile
+from app.models.audit import CaseAuditEvent
 from app.models.case import Case
 from app.models.refresh_token import RefreshToken
 from app.models.user import User
@@ -44,7 +47,10 @@ async def init_db() -> None:
     global _client, _db
     _client = AsyncMongoClient(settings.MONGODB_URI)
     _db = _client[settings.MONGODB_DB_NAME]
-    await init_beanie(database=_db, document_models=[User, Case, RefreshToken])
+    await init_beanie(
+        database=_db,
+        document_models=[User, Case, RefreshToken, CaseAuditEvent, AssessorProfile, AdminAuditEvent],
+    )
 
 
 async def close_db() -> None:

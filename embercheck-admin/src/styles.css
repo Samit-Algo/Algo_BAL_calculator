@@ -1,0 +1,71 @@
+/* EmberCheck Admin — minimal ember-palette tokens (cream / forest / amber). */
+:root {
+  --paper: #f3eedf;
+  --card: #fbf8ef;
+  --ink: #2a2a22;
+  --ink-soft: #6f6a59;
+  --line: #ded7c4;
+  --euc-deep: #3c4733; /* forest */
+  --ochre: #c28e3f; /* amber */
+  --danger: #93431f;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  color: var(--ink);
+  background: var(--paper);
+}
+
+.a-input {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1.5px solid var(--line);
+  background: #fff;
+  font-size: 14px;
+  font-family: var(--font-ui);
+  color: var(--ink);
+  outline: none;
+}
+.a-input:focus { border-color: var(--euc-deep); }
+
+.a-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 4px 18px rgba(40, 36, 24, 0.06);
+}
+
+.a-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 38px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border: 1.5px solid transparent;
+  font-family: var(--font-ui);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.a-btn[disabled] { opacity: 0.45; cursor: default; }
+.a-btn-primary { background: var(--euc-deep); color: var(--paper); }
+.a-btn-ochre { background: var(--ochre); color: #241a0c; }
+.a-btn-danger { background: transparent; color: var(--danger); border-color: color-mix(in oklab, var(--danger) 40%, transparent); }
+.a-btn-quiet { background: transparent; color: var(--ink); border-color: var(--line); }
+
+.a-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 12px;
+  font-weight: 700;
+}

@@ -25,6 +25,13 @@ class User(BeanieBaseUser, Document):
     auth_provider: str = "local"  # "local" (email/password) or "google"
     google_id: str | None = None
 
+    # Assessor Console foundation (CONSOLE-B1). Both default safely so EVERY
+    # existing user document loads unchanged: a stored user with neither field
+    # simply reads back as a "consumer" with no jurisdiction. Only the Console
+    # gate + worklist read these; nothing in auth/hashing/the pipeline touches them.
+    role: str = "consumer"  # "consumer" | "assessor"
+    jurisdiction: str | None = None  # e.g. "NSW"; only meaningful for assessors
+
     class Settings(BeanieBaseUser.Settings):
         # Keep BeanieBaseUser.Settings' case-insensitive unique email index;
         # just pin the collection name.

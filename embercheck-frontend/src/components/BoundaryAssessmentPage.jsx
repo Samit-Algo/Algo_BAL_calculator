@@ -77,6 +77,10 @@ export default function BoundaryAssessmentPage({
   // It is NOT passed to AssessmentMap in result phase.
   const [polygon, setPolygon] = useState(initialPolygon)
   const [assessment, setAssessment] = useState(null)
+  // The case's CURRENT headline (bal_rating + governing_direction) — held in
+  // state (not read from the ref during render) so the result panel shows the
+  // latest assessment, the same authoritative value the Console shows.
+  const [caseHeadline, setCaseHeadline] = useState(null)
   const [caseId, setCaseId] = useState(initialCaseId)
   const [highlightedSide, setHighlightedSide] = useState(null)
   const [assessing, setAssessing] = useState(false)
@@ -119,6 +123,7 @@ export default function BoundaryAssessmentPage({
         savedCaseRef.current = saved
         if (saved.boundary_assessment) {
           setAssessment(saved.boundary_assessment)
+          setCaseHeadline({ bal_rating: saved.bal_rating, governing_direction: saved.governing_direction })
           setCaseId(saved.id)
           // Store the polygon for later editing, but do NOT feed it to
           // AssessmentMap — the result phase shows the boundary via
@@ -175,6 +180,7 @@ export default function BoundaryAssessmentPage({
             slopeOverride: overrides?.slope,
           })
       setAssessment(saved.boundary_assessment)
+      setCaseHeadline({ bal_rating: saved.bal_rating, governing_direction: saved.governing_direction })
       setCaseId(saved.id)
       setPhase('result')
       savedCaseRef.current = saved
@@ -401,6 +407,7 @@ export default function BoundaryAssessmentPage({
                   onHoverSide={setHighlightedSide}
                   caseId={caseId}
                   sectorEvidence={savedCaseRef.current?.sector_evidence}
+                  caseHeadline={caseHeadline}
                 />
                 <div style={{ marginTop: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
                   <ECButton full icon="check" onClick={handleDone}>

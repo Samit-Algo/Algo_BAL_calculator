@@ -19,6 +19,8 @@ export default defineConfig({
       '/users': BACKEND,
       // Cases (Phase 1, Step 3b-ii): server-side assessment + photo persistence.
       '/cases': BACKEND,
+      // Assessor registration (Phase 2): register/me/documents.
+      '/assessor': BACKEND,
     },
   },
 })

@@ -22,6 +22,9 @@ export default function BoundaryStepCard({
   const [boundaryResult, setBoundaryResult] = useState(initialBoundaryResult)
   const [savedPolygon, setSavedPolygon] = useState(initialPolygon)
   const [caseId, setCaseId] = useState(initialCaseId)
+  // Current case headline (raise OR lower) carried back from the assessment page,
+  // so this summary card shows the latest assessment, not the immutable draft.
+  const [caseHeadline, setCaseHeadline] = useState(null)
   const [pageOpen, setPageOpen] = useState(false)
   const [starting, setStarting] = useState(false)
 
@@ -41,6 +44,12 @@ export default function BoundaryStepCard({
     setBoundaryResult(nextResult)
     setSavedPolygon(polygon)
     setCaseId(nextCaseId)
+    if (caseRecord) {
+      setCaseHeadline({
+        bal_rating: caseRecord.bal_rating,
+        governing_direction: caseRecord.governing_direction,
+      })
+    }
     setPageOpen(false)
     onBoundarySaved?.({
       boundaryResult: nextResult,
@@ -68,6 +77,7 @@ export default function BoundaryStepCard({
           variant="summary"
           result={boundaryResult}
           onHoverSide={onHoverSide}
+          caseHeadline={caseHeadline}
           action={
             <ECButton full icon="locate" onClick={openBoundaryPage} disabled={starting}>
               {starting ? 'Opening…' : 'View'}

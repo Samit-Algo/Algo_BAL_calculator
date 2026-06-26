@@ -90,6 +90,37 @@ function CaseCard({ case_, onOpen, onDelete }) {
         <div style={{ marginTop: 10, fontSize: 12, color: 'var(--ink-soft)' }}>
           Updated {formatDate(case_.updated_at)}
         </div>
+
+        {/* Assessor review request (CONSOLE-B3.2), read-only — the consumer sees
+            why the assessor needs more from them. Shown whenever a reason is set. */}
+        {case_.review_reason && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: '10px 12px',
+              borderRadius: 12,
+              background: 'color-mix(in oklab, var(--ochre) 12%, transparent)',
+              border: '1px solid color-mix(in oklab, var(--ochre) 28%, var(--line))',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, fontWeight: 700, color: '#7a5418', marginBottom: 4 }}>
+              <Glyph name="info" size={14} />
+              {case_.status === 'NEEDS_MORE_PHOTOS'
+                ? 'Additional photos requested'
+                : case_.status === 'SITE_VISIT_REQUIRED'
+                  ? 'On-site inspection required'
+                  : case_.status === 'REFERRED_SPECIALIST'
+                    ? 'Referred for specialist review'
+                    : 'Assessor note'}
+            </div>
+            <div style={{ fontSize: 12.5, lineHeight: 1.5, color: 'var(--ink)' }}>{case_.review_reason}</div>
+            {(case_.photo_request_sides || []).length > 0 && (
+              <div style={{ fontSize: 12, color: 'var(--ink-soft)', marginTop: 5 }}>
+                Please re-photograph: <strong style={{ color: 'var(--ink)' }}>{case_.photo_request_sides.join(', ')}</strong>
+              </div>
+            )}
+          </div>
+        )}
       </button>
 
       <button

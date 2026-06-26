@@ -201,6 +201,47 @@ export async function deleteCase(caseId) {
   }
 }
 
+// The approved assessors a consumer may choose for THIS case (Phase 4 —
+// state-level match). Returns AssessorSearchResult[] (business name, accreditation
+// level, availability). Empty list = none available for the case's state.
+export async function listAssessorsForCase(caseId) {
+  let response
+  try {
+    response = await apiFetch(`/cases/${caseId}/assessors`)
+  } catch {
+    throw new Error('We couldn’t reach the server. Please try again.')
+  }
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Please log in to continue.')
+    if (response.status === 404) throw new Error('That property record has expired. Please start again.')
+    throw new Error('We couldn’t load assessors just now. Please try again.')
+  }
+  return response.json()
+}
+
+// Submit a case to an accredited assessor (Phase 5). assessorId assigns the case
+// to the chosen assessor; omit it to submit unassigned. Returns the updated case
+// (CaseRead, incl. status SUBMITTED_TO_ASSESSOR + assigned_assessor_id).
+export async function submitCase(caseId, assessorId) {
+  const body = assessorId ? { assessor_id: assessorId } : {}
+  let response
+  try {
+    response = await apiFetch(`/cases/${caseId}/submit`, { method: 'POST', body: JSON.stringify(body) })
+  } catch {
+    throw new Error('We couldn’t reach the server. Please try again.')
+  }
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Please log in to continue.')
+    if (response.status === 400) {
+      const detail = await response.json().then((j) => j.detail).catch(() => null)
+      throw new Error(typeof detail === 'string' ? detail : 'That assessor isn’t available. Please choose another.')
+    }
+    if (response.status === 409) throw new Error('This case is already with an assessor.')
+    throw new Error('We couldn’t submit your case just now. Please try again.')
+  }
+  return response.json()
+}
+
 // The caller's cases, newest first (CaseSummary[]) for the dashboard.
 export async function listCases() {
   let response
