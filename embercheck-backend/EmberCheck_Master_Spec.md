@@ -1,7 +1,7 @@
 # EmberCheck — Master Specification
 
 **Project:** NSW bushfire BAL (Bushfire Attack Level) screening tool
-**Version:** 2.0 (2026-06-22)
+**Version:** 3.0 (2026-06-26)
 **This document is the single source of truth and describes what the code actually does.**
 If the spec and the code disagree, the **code wins** — update this document to match.
 
@@ -15,6 +15,36 @@ If the spec and the code disagree, the **code wins** — update this document to
 ---
 
 ## Changelog
+
+**3.0 (2026-06-26) — Assessor lifecycle, admin approval & assignment.**
+- **Three roles** (`User.role`): `consumer` (default), `assessor`, `admin`. §2, §2a.
+- **`AssessorProfile`** (`assessor_profiles`, 1:1 with User): identity,
+  accreditation, insurance, operating area, capacity, document refs, and a
+  `status` lifecycle (`PENDING/APPROVED/REJECTED/SUSPENDED/INACTIVE`). §2a.
+- **Assessor registration** — a logged-in consumer applies via
+  `POST /assessor/register` (creates a `PENDING` profile; grants **no** access),
+  uploads supporting docs (`/assessor/documents`, PDF/JPEG/PNG), and reads their
+  own application (`GET /assessor/me`). §7.
+- **Admin app + approval workflow** — a separate frontend (`embercheck-admin/`)
+  and an admin-gated `/admin/*` API: list/inspect applications, stream documents,
+  and **approve / reject / request-info / suspend / deactivate / reactivate**.
+  Every action writes an immutable `AdminAuditEvent` row. §2a, §7.
+- **The access gate is now real.** `current_assessor` requires
+  `role == "assessor"` **AND** an `APPROVED`, non-expired profile — approval is
+  the **only** path to Console access. Approval keeps role + status in lockstep
+  (approve → `role=assessor`; reject/suspend/deactivate → revert). §2a.
+- **Nearby assessor search (state-level)** — `GET /cases/{id}/assessors` returns
+  the `APPROVED`, accepting, in-state assessors a consumer may choose. Deliberately
+  coarse (state match, no geocoding/proximity yet). §7.
+- **Assignment** — `POST /cases/{id}/submit` now assigns the chosen assessor
+  (`Case.assigned_assessor_id`); the Console worklist + case read are
+  **assignment-scoped** (an assessor sees only their assigned cases, with a
+  dual-read so legacy unassigned cases still surface). The draft-leak testing flag
+  is **off**. §7, §12.
+- **Bootstrap scripts** — `scripts/set_admin.py` (mint the first admin),
+  `scripts/backfill_assessor_profiles.py` (give existing assessors an approved
+  profile). A **temporary demo** `POST /admin/login` (hardcoded `admin/admin`)
+  exists for demos and must be removed before deployment. §7, §15.
 
 **2.0 (2026-06-22) — Boundary redesign.**
 - **Boundary is now site reference AND measurement geometry** (per-side sectors,
@@ -49,6 +79,7 @@ If the spec and the code disagree, the **code wins** — update this document to
 ## Table of contents
 1. Overview & purpose
 2. Architecture
+2a. Roles, the assessor lifecycle & the access gate
 3. The assessment pipeline (step by step)
 3a. The boundary flow & per-side evidence
 4. The photo feature (point sharpening + per-side boundary photos)
@@ -109,8 +140,8 @@ screening only — not certified.**
 |---|---|---|
 | Backend | FastAPI (Python), `httpx`, `shapely`, `pyproj` | Stateless. Calls live NSW government APIs + reads static JSON reference files. |
 | Vision | Groq VLM (OpenAI-compatible chat/vision API) | Server-side only; the key never reaches the browser. |
-| Frontend | React + Vite | Talks to the backend over JSON / Server-Sent Events. |
-| Persistence | MongoDB via Beanie ODM (PyMongo async client) (Phase 1); local files for photo training-data records + VLM log | `fastapi-users` planned for consumer-account auth. |
+| Frontend | React + Vite — **three apps** | `embercheck-frontend/` (consumer), `embercheck-console/` (assessor), `embercheck-admin/` (admin). Each has its own dev server + a trimmed copy of the auth layer (a shared package is a Phase-9 cleanup). |
+| Persistence | MongoDB via Beanie ODM (PyMongo async client); local files for photo/document storage + logs | `fastapi-users` (email/password + Google OAuth) is wired. |
 
 **The map (SVTM) is a draft prior, not the verdict.** A core architectural shift:
 SVTM vegetation polygons used to be the *sole authority* for vegetation
@@ -135,13 +166,18 @@ written to disk as training-data records (§12).
 
 **Phase 1 persistence foundation** (`app/core/config.py`, `app/db/mongodb.py`,
 `app/models/user.py`, `app/models/case.py`): a PyMongo `AsyncMongoClient`
-connects to MongoDB and `init_beanie` registers two documents, wired via
-the FastAPI lifespan (DB init is non-fatal — a DB outage never stops the
-stateless assessment routes; `GET /db/ping` reports connectivity).
+connects to MongoDB and `init_beanie` registers **six documents** — `User`,
+`Case`, `RefreshToken`, `CaseAuditEvent`, `AssessorProfile`, `AdminAuditEvent` —
+wired via the FastAPI lifespan (DB init is non-fatal — a DB outage never stops the
+stateless assessment routes; `GET /db/ping` reports connectivity). Indexes are
+declared on each model's inner `Settings.indexes` (`IndexModel(...)`) and built by
+`init_beanie` at startup.
 - **User** (`users`): the `fastapi-users` Beanie base user (`email`,
   `hashed_password`, `is_active`, `is_superuser`, `is_verified`) plus `name`,
-  `created_at`, `auth_provider` (`"local"`/`"google"`), `google_id`. Auth
-  endpoints, token issuance and the `UserManager` are a later step.
+  `created_at`, `auth_provider` (`"local"`/`"google"`), `google_id`, and the
+  **`role`** (`"consumer"`/`"assessor"`/`"admin"`, default `consumer`) +
+  `jurisdiction` (state key, e.g. `"NSW"`) that govern access (§2a).
+- **AssessorProfile**, **AdminAuditEvent** — the assessor lifecycle (§2a).
 - **Case** (`cases`): one user's saved assessment for one property. It holds up
   to **three reads on one document**: the point read + its photo-sharpened form
   (`assessment`), the boundary edge read (`boundary_assessment`), and the
@@ -160,6 +196,54 @@ credential (§12) — not a JWT. **Google OAuth** is also wired (`POST /auth/goo
 §7): a verified Google ID token is exchanged for EmberCheck's own tokens, creating
 the user with `auth_provider: "google"` on first sign-in. Reset-password /
 verification token secrets are wired but not yet exposed as routes.
+
+---
+
+## 2a. Roles, the assessor lifecycle & the access gate
+
+**Three roles** live on `User.role` (a plain string, default `"consumer"`):
+`consumer`, `assessor`, `admin`. Access is role-string equality plus, for
+assessors, a profile-status check — there is **no public path** to `assessor` or
+`admin`; both are granted out-of-band (admin approval, or the bootstrap scripts).
+
+**`AssessorProfile`** (`assessor_profiles`, `app/models/assessor_profile.py`) —
+**1:1 with User** (unique `user_id` index). Only `user_id` and `status` are
+required; everything else is optional so a backfilled profile is valid. Fields:
+identity (`legal_first_name/last_name`, `date_of_birth`, `phone`), business
+(`business_name`, `trading_name`, `abn`), accreditation (`accreditation_number/
+level/expiry`, `qualification`), operating area (`operating_states[]`,
+`operating_lgas[]`, `base_address`, `base_location` GeoJSON + `service_radius_km`
+— **geocoding/2dsphere deferred**, §15), insurance (`insurer`,
+`insurance_policy_number`, `insurance_expiry`), capacity (`max_active_jobs`,
+`accepting_new_work`), `documents[]` (relative `file_path` refs, never bytes), and
+`review_reason`. `status` ∈ `PENDING / APPROVED / REJECTED / SUSPENDED / INACTIVE`.
+
+**The lifecycle:**
+```
+consumer applies ──▶ PENDING ──(admin approve)──▶ APPROVED  ──▶ Console access
+                        │                            │
+                        ├─(reject)──▶ REJECTED        ├─(suspend)──▶ SUSPENDED ──(reactivate)──▶ APPROVED
+                        └─(request-info, stays PENDING)└─(deactivate)──▶ INACTIVE
+```
+**Approval is the only thing that grants access**, and it keeps role + status in
+**lockstep**: approve/reactivate set `status=APPROVED` **and** `role="assessor"`;
+reject/suspend/deactivate set the non-approved status **and** revert
+`role="consumer"` so the gate closes immediately.
+
+**The access gate (`app/auth/backend.py`):**
+- `current_active_user` — valid Bearer access token for an active user, else `401`.
+- `current_assessor` — layers on top: `role == "assessor"` (else `403` *"assessor
+  access only"*) **AND** an `APPROVED` `AssessorProfile` whose
+  `accreditation_expiry` / `insurance_expiry` (if set) are **not in the past**
+  (else `403` *"assessor access not approved"*). A `None` expiry never blocks.
+  One indexed profile read on the assessor path. Gates **every** `/console/*` route.
+- `current_admin` — `role == "admin"`, else `403` *"admin access only"*. Gates
+  every `/admin/*` route.
+
+**Admin audit** (`AdminAuditEvent`, `admin_audit` collection) — a **sibling** of
+`CaseAuditEvent` (insert-only, never updated/deleted). One immutable row per admin
+action on a profile: `profile_id`, `target_user_id/email`, `admin_id/email`,
+`action`, `changes[]` (field-level diffs incl. status/role), `reason`, `timestamp`.
 
 ---
 
@@ -396,7 +480,7 @@ headline. **None of it may change without review.**
 
 **Direction of change is surfaced, never silently applied (the false-low guard):**
 
-| Change | Consumer surface (the only one wired today) | Console surface (parked) |
+| Change | Consumer surface | Console surface (assessor — wired) |
 |---|---|---|
 | Photo/override **raises** vegetation | applied — BAL goes up | applied |
 | Photo/override **same** severity | no change | no change |
@@ -493,8 +577,9 @@ Lightweight MongoDB connectivity check (admin `ping`; no data read or exposed).
 Email/password consumer accounts via `fastapi-users` + Beanie. **Bearer access
 token (JWT) in the `Authorization` header; no cookies.** The JWT is minted and
 validated by one `JWTStrategy` (`AUTH_SECRET`, `ACCESS_TOKEN_LIFETIME_SECONDS`).
-The refresh token is custom, DB-backed and rotated (see §12). No existing route
-is gated yet (that's Step 3).
+The refresh token is custom, DB-backed and rotated (see §12). The `/console/*`
+(assessor) and `/admin/*` (admin) surfaces are role-gated per §2a; `/cases/*` are
+owner-gated; `/assess*` stays public.
 
 #### `POST /auth/register`
 Signup. Request: `{ email, password, name? }` (password ≥ 8 chars).
@@ -561,7 +646,8 @@ surface as the same `404/400/503` as `/assess`.
 
 `CaseRead` shape: `{ id, status, property, assessment, boundary_assessment,
 bal_rating, governing_direction, governing_vegetation, photos, sector_evidence,
-created_at, updated_at, submitted_at }`.
+review_reason, photo_request_sides, created_at, updated_at, submitted_at,
+assigned_assessor_id }`.
 
 #### `PUT /cases/{case_id}/boundary`
 Requires auth (ownership 404). (Re)assess from a drawn boundary and store it on
@@ -636,13 +722,78 @@ headline from scratch** as the worst `final_bal` across sides (so clearing a
 raise can correctly lower the headline to the next-worst side). `→` same shape as
 the PUT.
 
+#### `GET /cases/{case_id}/assessors`
+Requires auth (ownership 404). The approved assessors a consumer may **choose**
+for this case — a deliberately coarse **state-level** match (no geocoding/distance
+yet, §15): the case's derived state (NSW today) against each assessor's
+`operating_states`, filtered to `status == APPROVED` **and** `accepting_new_work`.
+`→ [AssessorSearchResult]` = `{ assessor_id, business_name, legal_name,
+accreditation_level, accreditation_number, operating_states, accepting_new_work }`
+— **choose-level fields only**; private contact details (phone/abn/email) are never
+exposed. An unresolved state → `[]` (never "every assessor").
+
 #### `POST /cases/{case_id}/submit`
-Requires auth (ownership 404). Submits a completed case for accredited
-assessment — a **status transition only** (no assessor logic yet): sets
-`status: SUBMITTED_TO_ASSESSOR` + `submitted_at`, bumps `updated_at`, returns the
-updated `CaseRead`. Allowed only from `ANALYSIS_COMPLETE`; a still-`DRAFT` case →
-`409` ("complete the photo analysis first"); already submitted → returns current
-state (**idempotent**).
+Requires auth (ownership 404). Submits a case for accredited assessment **and
+assigns it** to the chosen assessor. Request (`SubmitRequest`): `assessor_id?`
+(from `GET /cases/{id}/assessors`) — when present it's re-validated against the
+same filter (`APPROVED` + accepting + in-state, else `400`) and stored as
+`Case.assigned_assessor_id` + `assigned_at`; omitting it submits **unassigned**
+(legacy global). Sets `status: SUBMITTED_TO_ASSESSOR` + `submitted_at`, returns
+`CaseRead`. Allowed from `DRAFT` or `ANALYSIS_COMPLETE`; idempotent if already
+submitted (re-supplying `assessor_id` re-assigns); a case already in the assessor's
+review lifecycle → `409`.
+
+### Assessor registration (Phase 2)
+
+A logged-in **consumer** applies to become an assessor. Applying grants **no**
+access — it only creates a `PENDING` profile; access comes solely from admin
+approval (§2a).
+
+#### `POST /assessor/register`
+Requires `current_active_user`. Body (`AssessorRegistrationRequest`) carries only
+applicant-supplied fields (name, phone, business, accreditation, operating area,
+insurance, …) — **never** `status`/`user_id`/`documents`. `status` is hardcoded
+`PENDING`, `user_id` stamped from the token. One per user: a second attempt →
+`409` with the current status. `→ 201 AssessorProfileRead`.
+
+#### `POST /assessor/documents`
+Requires auth + an existing profile (else `404`). Multipart: `files[]` +
+parallel `doc_types[]` form field (PDF/JPEG/PNG, ≤ 10 MB; `422`/`413` otherwise).
+Writes under `PHOTO_STORAGE_DIR/assessor_documents/<user_id>/` (path-traversal
+guarded), stores relative refs. `→ AssessorProfileRead`. (Own `ALLOWED_DOC_TYPES`
+— the consumer photo allow-list is untouched.)
+
+#### `GET /assessor/me`
+Requires auth. `→ AssessorProfileRead` for the caller's own application, or `404`
+if none (the consumer app uses this to show the form vs. the pending state).
+
+### Admin app (Phase 3) — `/admin/*`, admin-gated (`current_admin`)
+
+- `POST /admin/login` — **TEMP demo only** (hardcoded `admin`/`admin`): ensures a
+  bootstrap admin user exists and returns tokens. Remove before deployment (§15).
+- `GET /admin/me` — admin identity (gate check for the admin app).
+- `GET /admin/applications?status_filter=` — the application queue (summaries).
+- `GET /admin/applications/{id}` — full application detail (`AdminApplicationDetail`).
+- `GET /admin/applications/{id}/documents/{index}` — stream one document
+  (PDF/JPEG/PNG; path-traversal guarded).
+- `POST /admin/applications/{id}/{approve|reactivate}` — grant access
+  (`status=APPROVED` + `role=assessor`). reason optional.
+- `POST /admin/applications/{id}/{reject|suspend|deactivate}` — revoke access
+  (status + `role=consumer`). reject/suspend require a `reason` (`422` without).
+- `POST /admin/applications/{id}/request-info` — stays `PENDING`, records the
+  reason; reason required.
+
+Every action writes an immutable `AdminAuditEvent` (§2a).
+
+### Console (assessor) — `/console/*`, gated by `current_assessor` (§2a)
+
+The assessor reviews **only cases assigned to them** (worklist + single-case read
+are assignment-scoped, with a dual-read so legacy unassigned submitted cases still
+surface; out-of-scope → `404`, never `403`). Routes: `GET /console/me`,
+`/console/worklist`, `/console/cases/{id}` (+ its sector photo stream), and the
+write path `PUT …/sectors/{side}/confirm`, `PUT/DELETE …/sectors/{side}/override`,
+`PUT /console/cases/{id}/status` — every assessor action appends a `CaseAuditEvent`.
+The console surface may **lower-with-flag** (`reconcile_*(surface="console")`).
 
 ### `GET /suggest?q=<text>`
 Address autocomplete. `< 3` chars or any upstream error → `[]` (never errors).
@@ -782,14 +933,19 @@ Both directories are gitignored.
   the raw token is returned to the client once and never persisted, so a DB read
   can't be replayed as a credential. `/auth/refresh` rotates (revokes the old row,
   issues a new one); `/auth/logout` marks a row revoked.
-- **Cases** (`cases` collection, Step 3a + 5b-i): `POST /cases` saves the full
-  assessment (`status: DRAFT`); `/assess/photos` updates the case in place with
-  the sharpened assessment and a `photos[]` array (`status: ANALYSIS_COMPLETE`);
-  `POST /cases/{id}/submit` moves it to `SUBMITTED_TO_ASSESSOR` and stamps
-  `submitted_at` (transition only — no assessor-side logic yet). The capture
-  JPEGs still live on disk in the photo_store record (above); each
+- **Cases** (`cases` collection): `POST /cases` saves the full assessment
+  (`status: DRAFT`); `/assess/photos` updates it in place with the sharpened
+  assessment + `photos[]` (`status: ANALYSIS_COMPLETE`); `POST /cases/{id}/submit`
+  moves it to `SUBMITTED_TO_ASSESSOR`, stamps `submitted_at`, and sets
+  `assigned_assessor_id` + `assigned_at` when an assessor was chosen (indexed). The
+  capture JPEGs live on disk in the photo_store record (above); each
   `CasePhoto.file_path` is the relative `<assessment_id>/<direction>.jpg` location
-  there (the bytes are not duplicated into MongoDB).
+  there (bytes are not duplicated into MongoDB).
+- **Assessor documents** (`AssessorProfile.documents[]`): identity/accreditation/
+  insurance files written under `PHOTO_STORAGE_DIR/assessor_documents/<user_id>/`;
+  only the relative `file_path` is stored (PDF/JPEG/PNG), never bytes in MongoDB.
+- **Audit logs** (`case_audit`, `admin_audit`): both **insert-only** — assessor
+  case actions and admin profile actions are appended and never updated or deleted.
 
 ---
 
@@ -828,9 +984,12 @@ rebuild the draw layer (this avoids the "rebuild storm").
 - **My Properties / Dashboard** lists saved cases and supports **delete
   property** (→ `DELETE /cases/{id}`).
 - The main property page's **boundary card** shows the essentials + a **"View"**
-  button. **"Go to accredited assessor"** (`AssessorHandoffCard.jsx`) routes
-  through the existing login flow, then lands on an explicit **"not yet
-  available"** state — the Console is parked (§15).
+  button. **"Go to accredited assessor"** (`AssessorHandoffCard.jsx`) is now wired
+  (§2a): it fetches the approved in-state assessors (`GET /cases/{id}/assessors`),
+  shows a **choose-an-assessor** list (each with a *demo* ★ rating placeholder),
+  and on choose submits + assigns the case (`POST /cases/{id}/submit`). A
+  **"Become an accredited assessor"** entry in the user menu opens the registration
+  form / pending-status screen (`AssessorRegistration.jsx`).
 
 ---
 
@@ -847,7 +1006,10 @@ Not a contract — the current product direction the safety rules serve.
   — these are gated on login for now.
 - **Even the paid output stays indicative.** Boundary + photos sharpen the read
   but the result is still "indicative, screening only — not certified." Only an
-  accredited assessor (the parked Console) certifies and signs.
+  accredited assessor (via the Console) certifies and signs.
+- **The hand-off chain now exists**: consumer picks an approved assessor → the
+  case is assigned and submitted → that assessor reviews it in the Console. The
+  remaining gap is **sign-off + PDF report + payment** (§15).
 
 ---
 
@@ -868,11 +1030,11 @@ Not a contract — the current product direction the safety rules serve.
 - **NSW only** — all data sources are NSW government services.
 - **Slope is screening-grade** (house-to-vegetation), not a full AS 3959 effective
   slope; the per-side manual override is provided for correction.
-- **Consumer accounts (Phase 1).** Persistence (MongoDB + Beanie, `/db/ping`),
-  **email/password auth** + **Google OAuth** (`/auth/google`), the login gate,
-  the case lifecycle (create / boundary update / sector photos / per-side
-  overrides / submit / delete), and the dashboard are in place. `/assess` itself
-  stays public.
+- **Consumer accounts + assessor lifecycle are in place.** Persistence, auth
+  (email/password + Google OAuth), the case lifecycle, the dashboard, **assessor
+  registration → admin approval → the live access gate → choose-assessor →
+  assignment → Console review** all work end-to-end. `/assess` stays public.
+  The remaining lifecycle gap is **sign-off + PDF + delivery** (parked below).
 
 ### Parked / known issues (list, don't fix)
 
@@ -885,13 +1047,27 @@ Not a contract — the current product direction the safety rules serve.
   worst band.
 - **"One sharpening rating" UX** — the intended end state is a single evolving
   number (address → boundary → photos), not separate screens.
-- **PDF report output** — not built.
-- **MongoDB Atlas migration** — not done.
-- **Assessor Console** — the `/submit` status transition exists, but the
-  accredited-assessor workflow (full override of all inputs, lower-with-flag
-  reconciliation on the `console` surface, and signing) is **not built**. The
-  consumer surface is the only one wired; `reconcile_*(surface="console")` exists
-  in code but no route uses it. A draggable "confirm location" pin is also TODO.
+- **Sign-off + PDF report + email delivery** — the Console reviews and overrides,
+  but the final **sign endpoint**, the `COMPLETE` status, the generated report PDF,
+  and emailing it to the consumer are **not built**. (`ReportSignoff.jsx` exists as
+  a screen but isn't wired to a live sign endpoint.)
+- **Assessor proximity / geocoding** — `AssessorProfile.base_location` (GeoJSON) and
+  `service_radius_km` exist but are **not populated or indexed**: search is
+  deliberately **state-level only** (no `base_address` geocoding, no 2dsphere
+  index, no `$geoNear`, no postcode/district match). Distance/rating/turnaround in
+  search results are **not real** (no job history; the consumer UI shows a hardcoded
+  demo ★ rating). Finer matching + a real rating are future work.
+- **Capacity not enforced** — `max_active_jobs` / accept-decline / auto-hide at
+  capacity are modelled but not enforced (deferred).
+- **Notifications** — no in-app/email/SMS notifications yet (assigned/approved/
+  reminders/etc.).
+- **TEMP demo admin backdoor** — `POST /admin/login` (hardcoded `admin`/`admin`,
+  bootstraps `admin@embercheck.app`) **must be removed before deployment**; the real
+  path is `scripts/set_admin.py`.
+- **Third auth copy** — consumer, console and admin each carry a trimmed copy of the
+  auth layer; extract a shared package (Phase 9).
+- **Object storage + Atlas** — KYC/insurance docs and photos are on local disk;
+  MongoDB is local. Move docs to object storage + migrate to Atlas before real use.
 
 ---
 
