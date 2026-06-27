@@ -13,6 +13,13 @@ export async function getMe() {
   return { ok: false, reason: 'error' }
 }
 
+// GET /admin/overview?days=... — the analytics dashboard payload (one round-trip).
+export async function getOverview(days = 30) {
+  const response = await apiFetch(`/admin/overview?days=${encodeURIComponent(days)}`)
+  if (!response.ok) throw new Error('Could not load the dashboard.')
+  return response.json()
+}
+
 // GET /admin/applications?status_filter=... — the queue.
 export async function listApplications(statusFilter) {
   const qs = statusFilter ? `?status_filter=${encodeURIComponent(statusFilter)}` : ''

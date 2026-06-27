@@ -23,10 +23,12 @@ from pydantic import BaseModel
 from app.auth.backend import current_assessor
 from app.cases.service import COMPASS_SIDES, _transect_worse_than
 from app.config import settings as media_settings
+from app.models.assessor_profile import AssessorProfile
 from app.models.audit import AuditChange, CaseAuditEvent
-from app.models.case import Case, CaseStatus, SectorEvidence, SectorOverrides
+from app.models.case import Case, CaseStatus, SectorEvidence, SectorOverrides, Signoff
 from app.models.user import User
 from app.services.assessment_pipeline import BAL_SEVERITY, reconcile_sector_bal
+from app.services.report_pdf import DeterminationRow, ReportContext, render_report_pdf
 
 router = APIRouter(prefix="/console", tags=["console"])
 
@@ -416,6 +418,9 @@ class AssessorCaseRead(BaseModel):
     # The boundary transects (per_direction), passed through so the map can draw
     # per-side BAL chips where boundary sample points are present.
     transects: list | None = None
+    # The sign-off summary once the case is signed (status COMPLETE) — drives the
+    # Report tab's issued state + download. None until signed.
+    signoff: dict | None = None
 
 
 async def _get_in_scope_case_or_404(case_id: str, assessor: User) -> Case:
@@ -563,10 +568,19 @@ def _audit_event_text(a: CaseAuditEvent) -> str:
     """One-line description of a persisted assessor action for the trail."""
     if a.kind == "status":
         return _status_event_text(a)
+    if a.kind == "auto_status":
+        new = next((c.new for c in a.changes if c.field == "status"), None)
+        return f"Status advanced automatically to {STATUS_LABELS.get(new, new or '—')}."
     if a.kind == "auto_resume":
         return "Consumer uploaded requested evidence. Case automatically returned to Under review."
     if a.kind == "confirm":
         return f"{a.compass_side} elevation confirmed by the assessor."
+    if a.kind == "sign":
+        report_no = next((c.new for c in a.changes if c.field == "report_number"), None)
+        return (
+            f"Determination signed and issued by the assessor"
+            + (f" — report {report_no}." if report_no else ".")
+        )
     if a.kind == "revert":
         parts = "; ".join(f"{c.field}: {c.previous or '—'} → {c.new or '—'}" for c in a.changes)
         base = (
@@ -716,6 +730,7 @@ async def console_get_case(
         audit=build_case_audit(case, client_name, assessor_events),
         geometry=(case.boundary_assessment or {}).get("geometry"),
         transects=(case.boundary_assessment or {}).get("per_direction"),
+        signoff=_signoff_summary(case),
     )
 
 
@@ -803,6 +818,18 @@ def _bad_request(detail: str) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
+def _conflict(detail: str) -> HTTPException:
+    return HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+
+def _reject_if_signed(case: Case) -> None:
+    """A signed (COMPLETE) case is a frozen legal artifact — every assessor write
+    (confirm/override/revert/status) is refused with 409 so the certificate and
+    the live case can never diverge."""
+    if case.status == CaseStatus.COMPLETE:
+        raise _conflict("This case is signed and can no longer be edited.")
+
+
 def _require_boundary_side(case: Case, compass_side: str) -> SectorEvidence:
     """The SectorEvidence for a boundary side, or 400 when the case has no
     boundary read / no evidence for that side."""
@@ -886,6 +913,7 @@ async def console_confirm_sector(
     if compass_side not in COMPASS_SIDES:
         raise _bad_request(f"compass_side must be one of {', '.join(COMPASS_SIDES)}.")
     case = await _get_in_scope_case_or_404(case_id, assessor)
+    _reject_if_signed(case)
     side_ev = _require_boundary_side(case, compass_side)
 
     if not side_ev.reviewed:
@@ -894,11 +922,15 @@ async def console_confirm_sector(
         side_ev.reviewed_by = assessor.email
         side_ev.reviewed_at = now
         case.updated_at = now
+        prev = case.status
+        advanced = _auto_advance_status(case)
         await case.save()
         await CaseAuditEvent(
             case_id=case.id, assessor_id=assessor.id, assessor_email=assessor.email,
             compass_side=compass_side, kind="confirm", changes=[], reason=None,
         ).insert()
+        if advanced:
+            await _audit_auto_status(case, assessor, prev.value, advanced.value)
 
     return _sector_write_response(case, compass_side)
 
@@ -942,6 +974,7 @@ async def console_override_sector(
         raise _bad_request(f"slope_direction must be one of {', '.join(sorted(ALLOWED_SLOPE_DIRECTIONS))}.")
 
     case = await _get_in_scope_case_or_404(case_id, assessor)
+    _reject_if_signed(case)
     side_ev = _require_boundary_side(case, compass_side)
 
     before = _effective_before(case, side_ev)
@@ -966,6 +999,8 @@ async def console_override_sector(
 
     _console_reconcile(case)
     case.updated_at = now
+    prev = case.status
+    advanced = _auto_advance_status(case)
     await case.save()
 
     applied = {
@@ -987,6 +1022,8 @@ async def console_override_sector(
         case_id=case.id, assessor_id=assessor.id, assessor_email=assessor.email,
         compass_side=compass_side, kind="override", changes=changes, reason=body.reason.strip(),
     ).insert()
+    if advanced:
+        await _audit_auto_status(case, assessor, prev.value, advanced.value)
 
     return _sector_write_response(case, compass_side)
 
@@ -1006,6 +1043,7 @@ async def console_remove_override_sector(
     if compass_side not in COMPASS_SIDES:
         raise _bad_request(f"compass_side must be one of {', '.join(COMPASS_SIDES)}.")
     case = await _get_in_scope_case_or_404(case_id, assessor)
+    _reject_if_signed(case)
     side_ev = _require_boundary_side(case, compass_side)
 
     if side_ev.overrides is None:
@@ -1026,6 +1064,8 @@ async def console_remove_override_sector(
 
     _console_reconcile(case)
     case.updated_at = now
+    prev = case.status
+    advanced = _auto_advance_status(case)
     await case.save()
 
     changes = [
@@ -1041,6 +1081,8 @@ async def console_remove_override_sector(
         case_id=case.id, assessor_id=assessor.id, assessor_email=assessor.email,
         compass_side=compass_side, kind="revert", changes=changes, reason=None,
     ).insert()
+    if advanced:
+        await _audit_auto_status(case, assessor, prev.value, advanced.value)
 
     return _sector_write_response(case, compass_side)
 
@@ -1086,6 +1128,66 @@ def _ready_to_sign_blockers(case: Case) -> list[str]:
     if case.status == CaseStatus.REFERRED_SPECIALIST:
         blockers.append("A specialist referral is outstanding — close it and return to Under review first.")
     return blockers
+
+
+# ── automatic status transitions ────────────────────────────────────────────
+# The assessor used to drive every status change by hand. These move the case
+# through the *inferrable* states automatically as review happens — the backend
+# is the single source of truth, so the manual dropdown stays as an override and
+# for the states a machine can't infer (the request states need a typed reason;
+# COMPLETE is the explicit signing act).
+
+# Statuses the machine is allowed to move BETWEEN. It never touches the request
+# states (NEEDS_MORE_PHOTOS / SITE_VISIT_REQUIRED / REFERRED_SPECIALIST — those
+# carry a human reason) or COMPLETE (signed/locked).
+_AUTO_FROM = {
+    CaseStatus.SUBMITTED_TO_ASSESSOR,
+    CaseStatus.UNDER_REVIEW,
+    CaseStatus.READY_TO_SIGN,
+    CaseStatus.APPROVED,  # legacy alias of READY_TO_SIGN
+}
+
+
+def _auto_advance_status(case: Case) -> CaseStatus | None:
+    """Advance a case's status from the current evidence state. Returns the new
+    status if it changed (and mutates `case.status`), else None.
+
+    Rules:
+      • all sides reviewed + no blockers  → READY_TO_SIGN
+      • READY_TO_SIGN but blockers reappear → UNDER_REVIEW (a review went stale)
+      • first review action on a submitted case → UNDER_REVIEW
+    """
+    if case.status not in _AUTO_FROM:
+        return None
+
+    blockers = _ready_to_sign_blockers(case)
+    has_sides = bool(case.sector_evidence)
+    all_reviewed = has_sides and all(ev.reviewed for ev in case.sector_evidence)
+
+    if has_sides and all_reviewed and not blockers:
+        target = CaseStatus.READY_TO_SIGN
+    elif case.status in (CaseStatus.READY_TO_SIGN, CaseStatus.APPROVED) and blockers:
+        target = CaseStatus.UNDER_REVIEW
+    elif case.status == CaseStatus.SUBMITTED_TO_ASSESSOR:
+        target = CaseStatus.UNDER_REVIEW
+    else:
+        return None
+
+    if target == case.status:
+        return None
+    case.status = target
+    return target
+
+
+async def _audit_auto_status(case: Case, assessor: User, previous: str, new: str) -> None:
+    """Record an automatic status transition (kind='auto_status') so the trail
+    explains the jump and who triggered it (whichever review action did)."""
+    await CaseAuditEvent(
+        case_id=case.id, assessor_id=assessor.id, assessor_email=assessor.email,
+        compass_side=None, kind="auto_status",
+        changes=[AuditChange(field="status", previous=previous, new=new)],
+        reason=None,
+    ).insert()
 
 
 # ── CONSOLE-B3.3 / F3.3: review progress, outstanding checklist ──────────────
@@ -1223,6 +1325,7 @@ async def console_set_status(
                 sides.append(canonical)
 
     case = await _get_in_scope_case_or_404(case_id, assessor)
+    _reject_if_signed(case)
 
     if target == CaseStatus.READY_TO_SIGN:
         blockers = _ready_to_sign_blockers(case)
@@ -1255,3 +1358,209 @@ async def console_set_status(
     assessor_events = await CaseAuditEvent.find(CaseAuditEvent.case_id == case.id).to_list()
     audit = build_case_audit(case, client_name, assessor_events)
     return _case_status_response(case, audit)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P0: sign-off → issued PDF determination.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# The exact text the assessor attests to (stored verbatim on the Signoff record).
+ATTESTATION_TEXT = (
+    "I have reviewed the evidence and each elevation's classification. This "
+    "determination is mine, made under my accreditation."
+)
+
+# Statuses from which a case may be signed (READY_TO_SIGN + its legacy alias).
+_SIGNABLE_STATUSES = {CaseStatus.READY_TO_SIGN, CaseStatus.APPROVED}
+
+
+class SignRequest(BaseModel):
+    """The sign-off attestation — the assessor must tick the box (true) to sign."""
+
+    attestation: bool = False
+
+
+def _determination_rows(case: Case) -> list[DeterminationRow]:
+    """The four frozen per-side rows for the certificate — built from the SAME
+    `_build_sector` projection the Console workspace reads, so the issued document
+    and the on-screen review never disagree."""
+    side_gov = _side_governing_transects(case.boundary_assessment)
+    ev_by_side = {ev.compass_side: ev for ev in (case.sector_evidence or [])}
+    rows: list[DeterminationRow] = []
+    for side in COMPASS_SIDES:
+        s = _build_sector(side, ev_by_side.get(side), side_gov.get(side))
+        if s.overrides is not None:
+            basis = "overridden by assessor"
+        elif s.reviewed:
+            basis = "confirmed by assessor"
+        else:
+            basis = "suggested — unreviewed"
+        slope = (
+            f"{s.effective_slope_degrees}°"
+            + (f" {s.slope_direction}" if s.slope_direction else "")
+            if s.effective_slope_degrees is not None
+            else "—"
+        )
+        rows.append(DeterminationRow(
+            side=side[0],
+            vegetation=s.effective_classification or "—",
+            slope=slope,
+            distance=f"{s.distance_m} m" if s.distance_m is not None else "—",
+            bal=s.final_bal or "BAL-LOW",
+            basis=basis,
+        ))
+    return rows
+
+
+def _signoff_summary(case: Case) -> dict | None:
+    """The small signoff descriptor the frontend flips to the issued state with."""
+    so = case.signoff
+    if so is None:
+        return None
+    return {
+        "report_number": so.report_number,
+        "signed_at": so.signed_at,
+        "assessor_name": so.assessor_name,
+        "accreditation_number": so.accreditation_number,
+        "bal_rating": so.bal_rating,
+        "governing_direction": so.governing_direction,
+    }
+
+
+@router.post("/cases/{case_id}/sign")
+async def console_sign_case(
+    case_id: str,
+    body: SignRequest = Body(...),
+    assessor: User = Depends(current_assessor),
+) -> dict:
+    """Sign and ISSUE the determination. Freezes the per-side determination,
+    renders the PDF certificate, marks the case COMPLETE, and records an immutable
+    'sign' audit event. Gated by the same §8 completion rule the worklist uses.
+
+    422 if not attested · 400 (+ blockers) if not sign-ready · 409 if already
+    signed · 404 if out of scope. The signed case is then locked to edits (the
+    other write routes return 409)."""
+    if not body.attestation:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="You must attest to the determination before signing.",
+        )
+
+    case = await _get_in_scope_case_or_404(case_id, assessor)
+    if case.status == CaseStatus.COMPLETE:
+        raise _conflict("This case is already signed.")
+    if case.status not in _SIGNABLE_STATUSES:
+        raise _bad_request("The case must be marked Ready to sign before it can be signed.")
+    blockers = _ready_to_sign_blockers(case)
+    if blockers:
+        raise _bad_request(" ".join(blockers))
+
+    # Assessor identity for the certificate — profile first, User as fallback.
+    profile = await AssessorProfile.find_one(AssessorProfile.user_id == assessor.id)
+    name = None
+    if profile:
+        name = " ".join(
+            p for p in (profile.legal_first_name, profile.legal_last_name) if p
+        ).strip() or None
+    name = name or assessor.name or assessor.email
+    accreditation_number = profile.accreditation_number if profile else None
+    accreditation_level = profile.accreditation_level if profile else None
+    jurisdiction = assessor.jurisdiction or (
+        (profile.operating_states[0] if profile and profile.operating_states else None)
+    ) or "NSW"
+
+    now = datetime.now(timezone.utc)
+    report_number = f"EC-{str(case.id)[-8:]}-{now.strftime('%Y%m%d')}-01"
+    rows = _determination_rows(case)
+
+    # Render + persist the PDF on disk under PHOTO_STORAGE_DIR/<case>/report/.
+    locality = " · ".join(
+        p for p in (
+            f"{case.property.lga} LGA" if case.property.lga else None,
+            _derive_state(case) or "NSW",
+        ) if p
+    )
+    pdf_bytes = render_report_pdf(ReportContext(
+        report_number=report_number,
+        signed_at=now,
+        address=case.property.matched_address or case.property.address,
+        locality=locality,
+        assessor_name=name,
+        accreditation_number=accreditation_number or "",
+        accreditation_level=accreditation_level or "",
+        jurisdiction=jurisdiction,
+        overall_bal=case.bal_rating or "—",
+        governing_side=case.governing_direction or "",
+        rows=rows,
+    ))
+    rel_path = f"{case.id}/report/{report_number}.pdf"
+    base = Path(media_settings.PHOTO_STORAGE_DIR).resolve()
+    full = (base / rel_path).resolve()
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_bytes(pdf_bytes)
+
+    # Freeze the signoff record + flip the case to COMPLETE.
+    case.signoff = Signoff(
+        report_number=report_number,
+        signed_by_assessor_id=assessor.id,
+        assessor_name=name,
+        accreditation_number=accreditation_number,
+        accreditation_level=accreditation_level,
+        jurisdiction=jurisdiction,
+        signed_at=now,
+        bal_rating=case.bal_rating,
+        governing_direction=case.governing_direction,
+        determination=[r.__dict__ for r in rows],
+        attestation=ATTESTATION_TEXT,
+        report_path=rel_path,
+    )
+    previous = case.status
+    case.status = CaseStatus.COMPLETE
+    case.review_reason = None
+    case.photo_request_sides = []
+    case.updated_at = now
+    await case.save()
+
+    await CaseAuditEvent(
+        case_id=case.id, assessor_id=assessor.id, assessor_email=assessor.email,
+        compass_side=None, kind="sign",
+        changes=[
+            AuditChange(field="status", previous=previous.value, new=CaseStatus.COMPLETE.value),
+            AuditChange(field="report_number", previous=None, new=report_number),
+        ],
+        reason=None,
+    ).insert()
+
+    owner = await User.get(case.user_id)
+    client_name = owner.name if owner else None
+    assessor_events = await CaseAuditEvent.find(CaseAuditEvent.case_id == case.id).to_list()
+    audit = build_case_audit(case, client_name, assessor_events)
+    return {**_case_status_response(case, audit), "signoff": _signoff_summary(case)}
+
+
+@router.get("/cases/{case_id}/report")
+async def console_get_report(
+    case_id: str,
+    assessor: User = Depends(current_assessor),
+):
+    """Stream the signed PDF certificate for the assessor. Same scope as the case
+    read; an unsigned/out-of-scope case → 404. Path-traversal-guarded."""
+    case = await _get_in_scope_case_or_404(case_id, assessor)
+    return _stream_report_or_404(case)
+
+
+def _stream_report_or_404(case: Case) -> FileResponse:
+    """Shared PDF streamer for both the console and consumer report endpoints."""
+    if case.signoff is None or not case.signoff.report_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found.")
+    base = Path(media_settings.PHOTO_STORAGE_DIR).resolve()
+    full = (base / case.signoff.report_path).resolve()
+    if base != full and base not in full.parents:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found.")
+    if not full.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found.")
+    return FileResponse(
+        full,
+        media_type="application/pdf",
+        filename=f"{case.signoff.report_number}.pdf",
+    )

@@ -532,9 +532,48 @@ function MapLegend({ vegetation, hasBoundary }) {
     ...new Set(vegetation.features.map((f) => f.properties.as3959_class)),
   ]
 
+  // On phones the legend covered too much of the map, so it collapses to a small
+  // "Legend" pill by default and the user taps to expand it.
+  const mq = '(max-width: 640px)'
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window === 'undefined' ? false : window.matchMedia(mq).matches,
+  )
+  const [open, setOpen] = useState(() =>
+    typeof window === 'undefined' ? true : !window.matchMedia(mq).matches,
+  )
+  useEffect(() => {
+    const m = window.matchMedia(mq)
+    const onChange = (e) => {
+      setIsMobile(e.matches)
+      setOpen(!e.matches)
+    }
+    m.addEventListener('change', onChange)
+    return () => m.removeEventListener('change', onChange)
+  }, [])
+
+  if (isMobile && !open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="absolute bottom-9 left-3 z-[500] flex items-center gap-1.5 rounded-lg bg-ember-cream/95 px-2.5 py-1.5 text-xs font-semibold text-ember-forest shadow-md"
+      >
+        <span className="inline-block h-3 w-3 shrink-0 rounded-sm" style={{ backgroundColor: vegColor(classes[0]) || '#5e6b4f' }} />
+        Legend
+      </button>
+    )
+  }
+
   return (
     <div className="absolute bottom-9 left-3 z-[500] max-w-[220px] rounded-lg bg-ember-cream/95 p-2 text-xs text-ember-forest shadow-md">
-      <div className="mb-1 font-semibold">What you're seeing</div>
+      <button
+        type="button"
+        onClick={() => isMobile && setOpen(false)}
+        className="mb-1 flex w-full items-center justify-between gap-2.5 font-semibold"
+      >
+        What you're seeing
+        {isMobile && <span className="text-[15px] leading-none opacity-60">×</span>}
+      </button>
       <ul className="space-y-1">
         {hasBoundary && (
           <li className="flex items-center gap-2">

@@ -78,6 +78,33 @@ class BoundaryUpdateRequest(BaseModel):
     slope_override: float | None = None
 
 
+class CaseSignoffSummary(BaseModel):
+    """The consumer-facing slice of a signed determination — enough to show the
+    'signed' badge and a download affordance. The full frozen record + PDF live
+    on the Case; the consumer never sees internal fields."""
+
+    report_number: str
+    signed_at: datetime
+    assessor_name: str | None = None
+    accreditation_number: str | None = None
+    bal_rating: str | None = None
+    governing_direction: str | None = None
+
+    @classmethod
+    def from_case(cls, case) -> "CaseSignoffSummary | None":
+        so = getattr(case, "signoff", None)
+        if so is None:
+            return None
+        return cls(
+            report_number=so.report_number,
+            signed_at=so.signed_at,
+            assessor_name=so.assessor_name,
+            accreditation_number=so.accreditation_number,
+            bal_rating=so.bal_rating,
+            governing_direction=so.governing_direction,
+        )
+
+
 class CaseRead(BaseModel):
     """A case as returned to its owner."""
 
@@ -105,6 +132,10 @@ class CaseRead(BaseModel):
     # The assessor (User.id) this case is assigned to, if the consumer chose one
     # on submit (Phase 5). None = unassigned.
     assigned_assessor_id: str | None = None
+    # Set once an assessor signs the case (status COMPLETE). `signed` is the cheap
+    # flag the dashboard/property page gate the download on.
+    signed: bool = False
+    signoff: CaseSignoffSummary | None = None
 
     @classmethod
     def from_case(cls, case) -> "CaseRead":
@@ -126,6 +157,8 @@ class CaseRead(BaseModel):
             updated_at=case.updated_at,
             submitted_at=case.submitted_at,
             assigned_assessor_id=str(assigned) if assigned else None,
+            signed=getattr(case, "signoff", None) is not None,
+            signoff=CaseSignoffSummary.from_case(case),
         )
 
 
@@ -147,6 +180,10 @@ class CaseSummary(BaseModel):
     created_at: datetime
     updated_at: datetime
     submitted_at: datetime | None = None
+    # Signed determination summary (status COMPLETE), so the dashboard card can
+    # badge "Signed" and offer the download without a second request.
+    signed: bool = False
+    signoff: CaseSignoffSummary | None = None
 
     @classmethod
     def from_case(cls, case) -> "CaseSummary":
@@ -164,4 +201,6 @@ class CaseSummary(BaseModel):
             created_at=case.created_at,
             updated_at=case.updated_at,
             submitted_at=case.submitted_at,
+            signed=getattr(case, "signoff", None) is not None,
+            signoff=CaseSignoffSummary.from_case(case),
         )

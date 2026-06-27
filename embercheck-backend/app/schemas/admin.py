@@ -129,3 +129,70 @@ class AdminActionRequest(BaseModel):
     deactivate."""
 
     reason: str | None = None
+
+
+# ── Overview dashboard ────────────────────────────────────────────────────────
+# Shapes for GET /admin/overview — the platform analytics cockpit. Each block
+# below maps to one widget on the admin Overview screen (KPIs / timeline / pie /
+# bar / map / activity feed). All counts are computed server-side via Mongo
+# aggregation so the dashboard is a single round-trip.
+
+
+class AdminKpis(BaseModel):
+    """The headline counters across the top of the dashboard."""
+
+    total_cases: int = 0
+    signed_cases: int = 0  # COMPLETE / signed-off determinations
+    cases_in_review: int = 0  # submitted-to-assessor … ready-to-sign
+    total_users: int = 0
+    assessors_active: int = 0  # AssessorProfile.status == APPROVED
+    applications_pending: int = 0  # AssessorProfile.status == PENDING
+
+
+class CountBucket(BaseModel):
+    """A generic {label, count} pair driving the bar/pie charts."""
+
+    label: str
+    count: int
+
+
+class TimelinePoint(BaseModel):
+    """One zero-filled day on the activity timeline."""
+
+    date: str  # YYYY-MM-DD
+    cases: int = 0
+    signoffs: int = 0
+    signups: int = 0
+
+
+class MapPoint(BaseModel):
+    """One assessed property plotted on the map, colored by BAL rating."""
+
+    lat: float
+    lng: float
+    rating: str | None = None
+    address: str | None = None
+    status: str | None = None
+
+
+class ActivityItem(BaseModel):
+    """One recent admin action for the activity feed."""
+
+    action: str
+    admin_email: str | None = None
+    target_email: str | None = None
+    reason: str | None = None
+    timestamp: datetime
+
+
+class AdminOverview(BaseModel):
+    """The full Overview payload — one block per dashboard widget."""
+
+    kpis: AdminKpis
+    cases_by_status: list[CountBucket] = []
+    bal_distribution: list[CountBucket] = []
+    timeline: list[TimelinePoint] = []
+    map_points: list[MapPoint] = []
+    assessor_status: list[CountBucket] = []
+    assessor_states: list[CountBucket] = []
+    recent_activity: list[ActivityItem] = []

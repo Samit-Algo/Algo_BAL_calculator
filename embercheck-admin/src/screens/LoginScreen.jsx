@@ -24,7 +24,7 @@ export function LoginScreen({ onAuthed, notice }) {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-      <div className="a-card" style={{ width: 380, padding: '26px 26px 24px' }}>
+      <div className="a-card" style={{ width: '100%', maxWidth: 380, padding: '26px 26px 24px' }}>
         <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 16 }}>
           <span style={{ fontWeight: 800, fontSize: 20, color: 'var(--ink)' }}>EmberCheck</span>
           <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ochre)' }}>Admin</span>

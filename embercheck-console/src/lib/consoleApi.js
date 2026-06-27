@@ -4,7 +4,7 @@ import { apiFetch } from './auth'
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || ''
 
-export { login, logout } from './auth'
+export { login, loginWithGoogle, logout } from './auth'
 
 // GET /console/me — the cheap gate check. Returns:
 //   { ok: true, me }                     valid assessor token
@@ -108,6 +108,30 @@ export async function updateStatus(caseId, body) {
 // null if the photo is missing/forbidden (the caller falls back to a placeholder).
 export async function getSectorPhoto(caseId, compassSide, photoId) {
   const path = `/console/cases/${encodeURIComponent(caseId)}/sectors/${encodeURIComponent(compassSide)}/photos/${encodeURIComponent(photoId)}`
+  const response = await apiFetch(path)
+  if (!response.ok) return null
+  const blob = await response.blob()
+  return URL.createObjectURL(blob)
+}
+
+// POST /console/cases/{id}/sign — sign and issue the determination. `attestation`
+// must be true. Returns the refreshed case-status bundle plus `signoff`
+// { report_number, signed_at, assessor_name, bal_rating, ... }. A 400/409/422
+// (not ready / already signed / not attested) is thrown with the backend message.
+export async function signCase(caseId, { attestation } = {}) {
+  const path = `/console/cases/${encodeURIComponent(caseId)}/sign`
+  const response = await apiFetch(path, {
+    method: 'POST',
+    body: JSON.stringify({ attestation: !!attestation }),
+  })
+  if (response.ok) return response.json()
+  throw await writeError(response)
+}
+
+// GET /console/cases/{id}/report — fetch the signed PDF (Bearer) and return an
+// object URL the browser can open/download. Returns null if not signed/forbidden.
+export async function getCaseReport(caseId) {
+  const path = `/console/cases/${encodeURIComponent(caseId)}/report`
   const response = await apiFetch(path)
   if (!response.ok) return null
   const blob = await response.blob()

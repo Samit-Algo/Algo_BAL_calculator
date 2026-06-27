@@ -109,11 +109,13 @@ function useSideThumbs(caseId, side, photos) {
 }
 
 // One photo tile: the real <img> when ready; an honest neutral state otherwise.
-function PhotoTile({ url, status, label, tall, onView }) {
-  const height = tall ? 190 : 150
+function PhotoTile({ url, status, label, tall, wide, onView }) {
+  const height = wide ? 220 : tall ? 190 : 150
   const frame = {
-    flex: 1,
-    minWidth: 0,
+    // On mobile the tile is stacked in a COLUMN, where `flex:1` would set
+    // flex-basis:0% and collapse the height — so give it an explicit full width
+    // instead and let `height` stand.
+    ...(wide ? { width: '100%', flexShrink: 0 } : { flex: 1, minWidth: 0 }),
     height,
     borderRadius: 10,
     position: 'relative',
@@ -156,10 +158,10 @@ function PhotoViewer({ url, onClose }) {
 }
 
 // The per-photo AI read (its own proposal).
-function PhotoRead({ photo, index }) {
+function PhotoRead({ photo, index, isMobile }) {
   const ap = photo.ai_proposal
   return (
-    <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 7 }}>
+    <div style={{ width: isMobile ? '100%' : 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 7 }}>
       <CSectionLabel>Vision read — photo {index + 1}</CSectionLabel>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--ink)' }}>{ap?.vegetation_class || 'No read returned'}</span>
@@ -299,7 +301,7 @@ function DecisionChain({ sector }) {
 // every uploaded photo + AI analysis; review flags only change the annotations
 // (warning chips + conservative note) vs the "AI agrees with mapping" state.
 // Confirm / Override / Remove override write through the SHARED handlers (§2/§4).
-function GapCard({ caseId, sector, onView, actions }) {
+function GapCard({ caseId, sector, onView, actions, isMobile }) {
   const side = sector.compass_side
   const flags = sector.review_flags || []
   const photos = sector.photos || []
@@ -339,15 +341,16 @@ function GapCard({ caseId, sector, onView, actions }) {
       {photos.length > 0 ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
           {photos.map((photo, i) => (
-            <div key={photo.photo_id} style={{ display: 'flex', gap: 12 }}>
+            <div key={photo.photo_id} style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 12 }}>
               <PhotoTile
                 url={thumbMap[photo.photo_id]}
                 status={statusMap[photo.photo_id] || 'loading'}
                 tall={photos.length === 1}
+                wide={isMobile}
                 onView={onView}
                 label={`Site photo ${side[0]}${photos.length > 1 ? ' · ' + (i + 1) : ''}${photo.captured_at ? ' · ' + fmtDate(photo.captured_at) : ''}`}
               />
-              <PhotoRead photo={photo} index={i} />
+              <PhotoRead photo={photo} index={i} isMobile={isMobile} />
             </div>
           ))}
         </div>
@@ -440,7 +443,7 @@ function GapCard({ caseId, sector, onView, actions }) {
   )
 }
 
-export function PhotoReview({ caseId, data, actions }) {
+export function PhotoReview({ caseId, data, actions, isMobile }) {
   const sectors = data.sectors || []
   // PHOTO review, not flag review: every side with photos gets a full card
   // (flagged or not). Only sides with NO photos fall to the summary line.
@@ -452,7 +455,7 @@ export function PhotoReview({ caseId, data, actions }) {
 
   return (
     <div className="ec-scroll" style={{ position: 'absolute', inset: 0, overflowY: 'auto' }}>
-      <div style={{ maxWidth: 880, margin: '0 auto', padding: '22px 28px 48px' }}>
+      <div style={{ maxWidth: 880, margin: '0 auto', padding: isMobile ? '18px 14px 40px' : '22px 28px 48px' }}>
         <div style={{ marginBottom: 16, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 14 }}>
           <div>
             <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 21, margin: '0 0 3px', color: 'var(--ink)' }}>Photo review</h2>
@@ -477,7 +480,7 @@ export function PhotoReview({ caseId, data, actions }) {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           {withPhotos.map((s) => (
-            <GapCard key={s.compass_side} caseId={caseId} sector={s} onView={setViewerUrl} actions={actions} />
+            <GapCard key={s.compass_side} caseId={caseId} sector={s} onView={setViewerUrl} actions={actions} isMobile={isMobile} />
           ))}
 
           {noPhotos.length > 0 && (

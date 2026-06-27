@@ -7,6 +7,7 @@ import ResultPanel from './components/ResultPanel'
 import DrivingFactors from './components/DrivingFactors'
 import BoundaryStepCard from './components/BoundaryStepCard'
 import AssessorHandoffCard from './components/AssessorHandoffCard'
+import AssessorRequestCard from './components/AssessorRequestCard'
 import AssessorRegistration from './components/AssessorRegistration'
 import LoadingState from './components/LoadingState'
 import ContourField from './components/ui/ContourField'
@@ -79,11 +80,35 @@ function App() {
   const [resuming, setResuming] = useState(
     () => hasSession && Boolean(bootIntent.caseId),
   )
+  // Bumped to ask BoundaryStepCard to open its boundary page (the consumer
+  // responding to an assessor's photo request from AssessorRequestCard).
+  const [openBoundarySignal, setOpenBoundarySignal] = useState(0)
+  // True briefly after the consumer supplied requested photos and the case
+  // auto-returned to review — drives AssessorRequestCard's confirmation state.
+  const [justResumed, setJustResumed] = useState(false)
 
-  function handleBoundarySaved({ boundaryResult, polygon, caseId, caseRecord }) {
+  // Statuses where the assessor has sent the case back to the consumer.
+  const REQUEST_STATUSES = ['NEEDS_MORE_PHOTOS', 'CHANGES_REQUESTED', 'SITE_VISIT_REQUIRED', 'REFERRED_SPECIALIST']
+
+  async function handleBoundarySaved({ boundaryResult, polygon, caseId, caseRecord }) {
     setBoundarySession({ boundaryResult, polygon, caseId })
     if (caseRecord) setActiveCase(caseRecord)
     setHash(`#/cases/${caseId}`)
+
+    // Re-fetch the case so its status reflects any server-side auto-resume: adding
+    // a photo to a requested side flips the case back to UNDER_REVIEW (the
+    // caseRecord carried up from the boundary page predates the upload). If it just
+    // left a photo-request state, surface the "sent back to your assessor" note.
+    const wasRequest = REQUEST_STATUSES.includes(caseRecord?.status)
+    try {
+      const fresh = await getCase(caseId)
+      setActiveCase(fresh)
+      if (wasRequest && !REQUEST_STATUSES.includes(fresh.status)) {
+        setJustResumed(true)
+      }
+    } catch {
+      /* keep the optimistic caseRecord on a refetch failure */
+    }
   }
 
   function handleBoundaryCleared() {
@@ -176,6 +201,7 @@ function App() {
     setBoundarySession(null)
     setHighlightedSide(null)
     setActiveCase(null)
+    setJustResumed(false)
   }
 
   // Header back: a resumed case returns to the dashboard; a fresh result returns
@@ -402,6 +428,17 @@ function App() {
                 {/* story column — default result always visible; boundary and photo
                     summaries stack below without replacing each other. */}
                 <div className="ec-story-col">
+                  {(justResumed || REQUEST_STATUSES.includes(activeCase?.status)) && (
+                    <Reveal>
+                      <AssessorRequestCard
+                        status={activeCase?.status}
+                        reason={activeCase?.review_reason}
+                        sides={activeCase?.photo_request_sides || []}
+                        justResumed={justResumed}
+                        onAddPhotos={() => setOpenBoundarySignal((n) => n + 1)}
+                      />
+                    </Reveal>
+                  )}
                   <Reveal>
                     <ResultPanel
                       result={result}
@@ -423,10 +460,17 @@ function App() {
                       onBoundarySaved={handleBoundarySaved}
                       onBoundaryCleared={handleBoundaryCleared}
                       onHoverSide={setHighlightedSide}
+                      openSignal={openBoundarySignal}
                     />
                   </Reveal>
                   <Reveal delay={120}>
-                    <AssessorHandoffCard caseId={boundarySession?.caseId || activeCase?.id || null} />
+                    <AssessorHandoffCard
+                      caseId={boundarySession?.caseId || activeCase?.id || null}
+                      caseStatus={activeCase?.status || null}
+                      assignedAssessorId={activeCase?.assigned_assessor_id || null}
+                      signed={activeCase?.signed || false}
+                      onSubmitted={(updated) => setActiveCase(updated)}
+                    />
                   </Reveal>
                 </div>
               </div>

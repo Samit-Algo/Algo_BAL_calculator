@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ECCard, ECEyebrow } from './ui/ECCard'
 import ECButton from './ui/ECButton'
 import BoundaryAssessmentPage from './BoundaryAssessmentPage'
@@ -17,6 +17,7 @@ export default function BoundaryStepCard({
   onBoundarySaved,
   onBoundaryCleared,
   onHoverSide,
+  openSignal = 0,
 }) {
   const { ensureAuthenticated } = useAuth()
   const [boundaryResult, setBoundaryResult] = useState(initialBoundaryResult)
@@ -39,6 +40,17 @@ export default function BoundaryStepCard({
       setStarting(false)
     }
   }
+
+  // Open the boundary page when the parent bumps `openSignal` (the consumer
+  // chose "Add the requested photos" on AssessorRequestCard). The first render's
+  // value is ignored so it only reacts to deliberate bumps.
+  const seenSignal = useRef(openSignal)
+  useEffect(() => {
+    if (openSignal === seenSignal.current) return
+    seenSignal.current = openSignal
+    openBoundaryPage()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openSignal])
 
   function handleComplete({ boundaryResult: nextResult, polygon, caseId: nextCaseId, caseRecord }) {
     setBoundaryResult(nextResult)

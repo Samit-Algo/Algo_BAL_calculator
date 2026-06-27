@@ -7,7 +7,7 @@
 // "Clear boundary" button, and the onPolygon plumbing — the assessor never edits
 // geometry here. Tailwind ember-* classes are replaced with inline styles using
 // the console tokens.
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import {
   MapContainer,
   TileLayer,
@@ -229,23 +229,61 @@ function MapCompass() {
 function MapLegend({ vegetation, hasBoundary }) {
   const classes = [...new Set(vegetation.features.map((f) => f.properties.as3959_class))]
   const swatch = (style) => ({ display: 'inline-block', height: 12, width: 12, flexShrink: 0, borderRadius: 3, ...style })
+
+  // On phones the legend covered too much of the map, so it collapses to a small
+  // "Legend" pill by default and the assessor taps to expand it.
+  const mq = '(max-width: 820px)'
+  const [isMobile, setIsMobile] = useState(() =>
+    typeof window === 'undefined' ? false : window.matchMedia(mq).matches,
+  )
+  const [open, setOpen] = useState(() =>
+    typeof window === 'undefined' ? true : !window.matchMedia(mq).matches,
+  )
+  useEffect(() => {
+    const m = window.matchMedia(mq)
+    const onChange = (e) => {
+      setIsMobile(e.matches)
+      setOpen(!e.matches)
+    }
+    m.addEventListener('change', onChange)
+    return () => m.removeEventListener('change', onChange)
+  }, [])
+
+  const shell = {
+    position: 'absolute',
+    bottom: 34,
+    left: 12,
+    zIndex: 500,
+    borderRadius: 8,
+    background: 'rgba(247,242,226,0.95)',
+    color: '#3C4733',
+    boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
+  }
+
+  // Collapsed (mobile): a compact tappable pill that doesn't obscure the map.
+  if (isMobile && !open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        style={{ ...shell, display: 'flex', alignItems: 'center', gap: 6, padding: '6px 11px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 700, fontFamily: 'inherit' }}
+      >
+        <span style={swatch({ background: vegColor(classes[0]) || '#5e6b4f' })} />
+        Legend
+      </button>
+    )
+  }
+
   return (
-    <div
-      style={{
-        position: 'absolute',
-        bottom: 34,
-        left: 12,
-        zIndex: 500,
-        maxWidth: 220,
-        borderRadius: 8,
-        background: 'rgba(247,242,226,0.95)',
-        padding: 8,
-        fontSize: 12,
-        color: '#3C4733',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.2)',
-      }}
-    >
-      <div style={{ marginBottom: 4, fontWeight: 700 }}>What you’re seeing</div>
+    <div style={{ ...shell, maxWidth: 220, padding: 8, fontSize: 12 }}>
+      <button
+        type="button"
+        onClick={() => isMobile && setOpen(false)}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 4, padding: 0, border: 'none', background: 'transparent', color: 'inherit', cursor: isMobile ? 'pointer' : 'default', fontSize: 12, fontWeight: 700, fontFamily: 'inherit' }}
+      >
+        What you’re seeing
+        {isMobile && <span style={{ fontSize: 15, lineHeight: 1, opacity: 0.6 }}>×</span>}
+      </button>
       <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
         {hasBoundary && (
           <li style={{ display: 'flex', alignItems: 'center', gap: 8 }}>

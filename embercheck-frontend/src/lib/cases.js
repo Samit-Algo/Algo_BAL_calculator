@@ -86,6 +86,21 @@ export async function getCasePhotoURL(caseId, direction) {
   }
 }
 
+// Fetch the signed PDF report (P0) for one of the caller's cases and return an
+// object URL the browser can open/download. The Bearer token must be attached,
+// so we fetch via apiFetch and wrap the blob. Returns null if the case isn't
+// signed / not owned (the dashboard hides the button unless the case is signed).
+export async function getCaseReportURL(caseId) {
+  try {
+    const response = await apiFetch(`/cases/${caseId}/report`)
+    if (!response.ok) return null
+    const blob = await response.blob()
+    return URL.createObjectURL(blob)
+  } catch {
+    return null
+  }
+}
+
 // Upload one or more photos for a compass side on a case. Accepts an array of
 // File objects. Returns the updated SectorEvidence for that side.
 export async function uploadSectorPhotos(caseId, compassSide, files) {

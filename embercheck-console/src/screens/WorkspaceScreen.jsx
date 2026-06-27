@@ -29,6 +29,7 @@ import {
 import { Glyph } from '../components/Glyph'
 import { confBand } from '../lib/bal'
 import AssessmentMap from '../components/AssessmentMap'
+import { useIsMobile } from '../lib/useIsMobile'
 import { OverrideEditor, effectiveVeg, hasAssessorOverride } from '../components/OverrideEditor'
 import { PhotoReview } from './PhotoReview'
 import { AuditTrail } from './AuditTrail'
@@ -131,6 +132,10 @@ function ReviewStatusPanel({ data, busy, error, onUpdate }) {
         </CBtn>
       </div>
 
+      <div style={{ fontSize: 10.5, color: 'var(--ink-soft)', marginBottom: 9, lineHeight: 1.4 }}>
+        Status advances automatically as you review (→ Under review on first action, → Ready to sign once every elevation is reviewed). Use this only to override or request more from the client.
+      </div>
+
       {isPhotos && (
         <div style={{ marginBottom: 9 }}>
           <CSectionLabel style={{ marginBottom: 5 }}>Photos needed from</CSectionLabel>
@@ -218,15 +223,32 @@ function ReviewSummary({ data }) {
   const checklist = data.review_checklist || []
   const blockers = data.ready_to_sign_blockers || []
   const ready = !!data.can_ready_to_sign
+  // Collapsed by default — the assessor expands it when they want the progress
+  // bar, outstanding tasks and blockers. The READY/NOT-READY pill stays visible
+  // in the header either way.
+  const [open, setOpen] = useState(false)
 
   return (
     <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--line)' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 9 }}>
-        <CSectionLabel>Review summary</CSectionLabel>
+      <button
+        type="button"
+        className="ec-press"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: open ? 9 : 0, padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
+      >
+        <span style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span style={{ display: 'flex', color: 'var(--ink-soft)', transform: open ? 'rotate(90deg)' : 'none', transition: 'transform 0.18s ease' }}>
+            <Glyph name="chevronRight" size={13} />
+          </span>
+          <CSectionLabel>Review summary</CSectionLabel>
+        </span>
         <span style={{ fontSize: 11, fontWeight: 800, letterSpacing: '0.03em', color: ready ? 'var(--euc-deep)' : OCHRE }}>
           {ready ? 'READY FOR SIGN-OFF' : 'NOT READY'}
         </span>
-      </div>
+      </button>
+
+      {!open ? null : <>
 
       {/* progress bar — only meaningful when the case has elevations to review */}
       {progress.total > 0 && (
@@ -286,6 +308,8 @@ function ReviewSummary({ data }) {
           </span>
         </div>
       )}
+
+      </>}
     </div>
   )
 }
@@ -496,14 +520,29 @@ function ElevationDetail({ sector, hasBoundary, busy, editing, onConfirm, onOver
   )
 }
 
-function RightPanel({ data, selected, setSelected, actions, statusActions }) {
+function RightPanel({ data, selected, setSelected, actions, statusActions, isMobile }) {
   const sectors = data.sectors
   const flags = sectors.reduce((n, s) => n + (s.review_flags || []).length, 0)
   const reviewedCount = sectors.filter((s) => s.reviewed).length
   const current = sectors.find((s) => s.compass_side === selected) || sectors[0]
 
   return (
-    <div style={{ width: 472, flexShrink: 0, display: 'flex', flexDirection: 'column', background: 'var(--paper)', minWidth: 0, borderLeft: '1px solid var(--line)' }}>
+    <div
+      className={isMobile ? 'ec-scroll' : undefined}
+      style={{
+        width: isMobile ? '100%' : 472,
+        flex: isMobile ? 1 : undefined,
+        flexShrink: isMobile ? 1 : 0,
+        minHeight: 0,
+        overflowY: isMobile ? 'auto' : undefined,
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'var(--paper)',
+        minWidth: 0,
+        borderLeft: isMobile ? 'none' : '1px solid var(--line)',
+        borderTop: isMobile ? '1px solid var(--line)' : 'none',
+      }}
+    >
       {/* case-level review status (CONSOLE-B3.2) — remounts on status change so the
           dropdown/reason reset cleanly */}
       <ReviewStatusPanel key={data.status} data={data} {...statusActions} />
@@ -570,8 +609,9 @@ function RightPanel({ data, selected, setSelected, actions, statusActions }) {
         })}
       </div>
 
-      {/* selected elevation */}
-      <div className="ec-scroll" style={{ flex: 1, overflowY: 'auto' }}>
+      {/* selected elevation — on phones the whole shell scrolls, so this pane
+          flows naturally rather than owning its own scroll region. */}
+      <div className="ec-scroll" style={isMobile ? {} : { flex: 1, overflowY: 'auto' }}>
         <ElevationDetail sector={current} hasBoundary={data.has_boundary} {...actions} />
         {flags > 0 && (
           <div style={{ margin: '4px 14px 16px', padding: '10px 12px', borderRadius: 10, background: 'color-mix(in oklab, #B06F3A 10%, transparent)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
@@ -627,12 +667,17 @@ function ElevationButtons({ sectors, selected, setSelected, zIndex }) {
 // ── left pane: the SAME Leaflet map the consumer app draws (read-only), fed by
 // the geometry CONSOLE-B2 now surfaces. Falls back to a neutral placeholder for
 // a point-only case that carries no boundary geometry. ──────────────────────
-function LeftCanvas({ data, selected, setSelected }) {
+function LeftCanvas({ data, selected, setSelected, isMobile }) {
   const hasGeometry = !!data.geometry?.property_point
+  // On phones the map becomes a fixed-height band stacked above the evidence
+  // panel; on desktop it fills the left half of the cockpit.
+  const frame = isMobile
+    ? { height: 240, position: 'relative', flexShrink: 0, overflow: 'hidden' }
+    : { flex: 1, position: 'relative', minWidth: 380, overflow: 'hidden' }
 
   if (hasGeometry) {
     return (
-      <div style={{ flex: 1, position: 'relative', minWidth: 380, overflow: 'hidden' }}>
+      <div style={frame}>
         <AssessmentMap
           geometry={data.geometry}
           transects={data.transects}
@@ -647,7 +692,7 @@ function LeftCanvas({ data, selected, setSelected }) {
 
   // Point-only case: no boundary geometry to draw — keep the neutral placeholder.
   return (
-    <div style={{ flex: 1, position: 'relative', minWidth: 380, background: '#E7E1CE', overflow: 'hidden' }}>
+    <div style={{ ...frame, background: '#E7E1CE' }}>
       <div
         style={{
           position: 'absolute',
@@ -681,6 +726,7 @@ function ComingNext({ label }) {
 
 // ── the screen ──────────────────────────────────────────────────────────────
 export function WorkspaceScreen({ caseId, onTitle, me }) {
+  const isMobile = useIsMobile()
   // The fetch result is tagged with its caseId; loading is DERIVED by comparing
   // (no synchronous setState in the effect). Default selection + tab reset are
   // applied in the async .then, not the effect body.
@@ -856,6 +902,28 @@ export function WorkspaceScreen({ caseId, onTitle, me }) {
     }
   }
 
+  // Sign-off (P0). The sign response carries the same case-status bundle as a
+  // status change plus `signoff`; patch it in so the whole workspace flips to the
+  // signed/locked state, then refetch so the audit trail picks up the sign event.
+  async function handleSigned(resp) {
+    patchData((d) => ({
+      ...d,
+      status: resp.status,
+      ui_state: resp.ui_state,
+      review_reason: resp.review_reason,
+      photo_request_sides: resp.photo_request_sides,
+      review_progress: resp.review_progress,
+      remaining_reviews: resp.remaining_reviews,
+      review_checklist: resp.review_checklist,
+      outstanding_requests: resp.outstanding_requests,
+      can_ready_to_sign: resp.can_ready_to_sign,
+      ready_to_sign_blockers: resp.ready_to_sign_blockers,
+      signoff: resp.signoff,
+      audit: resp.audit,
+    }))
+    await refreshCase()
+  }
+
   function selectSide(side) {
     setEditing(null)
     setFormError(null)
@@ -876,21 +944,21 @@ export function WorkspaceScreen({ caseId, onTitle, me }) {
   return (
     <>
       {/* job header (mockup app-shell job route) */}
-      <div style={{ flexShrink: 0, borderBottom: '1px solid var(--line)', background: 'var(--panel)', padding: '10px 16px 0' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, minWidth: 0 }}>
-            <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 18, margin: 0, color: 'var(--ink)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+      <div style={{ flexShrink: 0, borderBottom: '1px solid var(--line)', background: 'var(--panel)', padding: isMobile ? '10px 12px 0' : '10px 16px 0' }}>
+        <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'flex-start' : 'center', justifyContent: 'space-between', gap: isMobile ? 8 : 14, marginBottom: 8 }}>
+          <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'flex-start' : 'baseline', gap: isMobile ? 2 : 12, minWidth: 0, maxWidth: '100%' }}>
+            <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: isMobile ? 16 : 18, margin: 0, color: 'var(--ink)', whiteSpace: isMobile ? 'normal' : 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%' }}>
               {p.matched_address || p.address}
             </h1>
-            <span className="cs-mono" style={{ fontSize: 10.5, color: 'var(--ink-soft)', whiteSpace: 'nowrap' }}>{sub}</span>
+            <span className="cs-mono" style={{ fontSize: 10.5, color: 'var(--ink-soft)', whiteSpace: isMobile ? 'normal' : 'nowrap' }}>{sub}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0, flexWrap: 'wrap' }}>
             <CStatusChip state={data.ui_state} />
             <CBALChip bal={data.bal_rating} suggested />
-            <CBtn variant="quiet" disabled title="Report builder lands in a later step">Report preview</CBtn>
+            {!isMobile && <CBtn variant="quiet" disabled title="Report builder lands in a later step">Report preview</CBtn>}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 2 }}>
+        <div className="ec-scroll" style={{ display: 'flex', gap: 2, overflowX: isMobile ? 'auto' : 'visible' }}>
           {TABS.map(([id, label]) => {
             const sel = tab === id
             const text = id === 'photo' && flaggedCount > 0 ? `${label} (${flaggedCount})` : label
@@ -903,6 +971,8 @@ export function WorkspaceScreen({ caseId, onTitle, me }) {
                   padding: '7px 14px 8px',
                   cursor: 'pointer',
                   border: 'none',
+                  whiteSpace: 'nowrap',
+                  flexShrink: 0,
                   fontFamily: 'var(--font-ui)',
                   fontSize: 12.5,
                   fontWeight: 600,
@@ -919,25 +989,28 @@ export function WorkspaceScreen({ caseId, onTitle, me }) {
         </div>
       </div>
 
-      {/* tab content */}
+      {/* tab content — fills the cockpit and manages its own scroll. On phones the
+          workspace tab stacks: the map pins on top and the evidence panel scrolls
+          beneath it. */}
       <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
         {tab === 'workspace' ? (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', minWidth: 0 }}>
-            <LeftCanvas data={data} selected={selected} setSelected={selectSide} />
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: isMobile ? 'column' : 'row', minWidth: 0 }}>
+            <LeftCanvas data={data} selected={selected} setSelected={selectSide} isMobile={isMobile} />
             <RightPanel
               data={data}
               selected={selected}
               setSelected={selectSide}
               actions={actions}
               statusActions={{ busy: statusBusy, error: statusError, onUpdate: handleUpdateStatus }}
+              isMobile={isMobile}
             />
           </div>
         ) : tab === 'photo' ? (
-          <PhotoReview caseId={caseId} data={data} actions={actions} selected={selected} setSelected={selectSide} />
+          <PhotoReview caseId={caseId} data={data} actions={actions} selected={selected} setSelected={selectSide} isMobile={isMobile} />
         ) : tab === 'audit' ? (
-          <AuditTrail data={data} />
+          <AuditTrail data={data} isMobile={isMobile} />
         ) : tab === 'report' ? (
-          <ReportSignoff data={data} me={me} onGotoWorkspace={() => setTab('workspace')} />
+          <ReportSignoff data={data} me={me} caseId={caseId} onSigned={handleSigned} onGotoWorkspace={() => setTab('workspace')} isMobile={isMobile} />
         ) : (
           <ComingNext label={TABS.find(([id]) => id === tab)?.[1]} />
         )}

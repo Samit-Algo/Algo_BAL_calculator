@@ -153,6 +153,35 @@ class SectorEvidence(BaseModel):
         return True
 
 
+class Signoff(BaseModel):
+    """The frozen record of an assessor signing a case (P0 sign-off).
+
+    Once a case is signed it becomes a legal artifact: the determination is
+    SNAPSHOTTED here so the issued certificate can never drift if the live case
+    is somehow edited afterwards. The case is also locked to edits while COMPLETE
+    (see the console write routes), so in practice the snapshot and the live case
+    stay in agreement — the snapshot is the belt-and-braces guarantee.
+    """
+
+    report_number: str  # e.g. EC-<caseid8>-<YYYYMMDD>-<seq>
+    signed_by_assessor_id: PydanticObjectId
+    assessor_name: str | None = None
+    accreditation_number: str | None = None
+    accreditation_level: str | None = None
+    jurisdiction: str | None = None
+    signed_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    # Frozen headline + per-side rows at the moment of signing.
+    bal_rating: str | None = None
+    governing_direction: str | None = None
+    determination: list[dict] = Field(default_factory=list)
+
+    # The exact attestation text the assessor agreed to (audit-grade).
+    attestation: str | None = None
+    # Relative path (under PHOTO_STORAGE_DIR) to the rendered PDF on disk.
+    report_path: str
+
+
 class Case(Document):
     """A saved assessment owned by a user."""
 
@@ -200,6 +229,10 @@ class Case(Document):
     # cases keep working). assigned_at records when the choice was made.
     assigned_assessor_id: PydanticObjectId | None = None
     assigned_at: datetime | None = None
+
+    # The frozen sign-off record once an assessor signs the case (status COMPLETE).
+    # None until signed. The rendered PDF lives on disk at signoff.report_path.
+    signoff: Signoff | None = None
 
     class Settings:
         name = "cases"

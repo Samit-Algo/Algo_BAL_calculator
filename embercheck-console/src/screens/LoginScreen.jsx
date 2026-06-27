@@ -1,8 +1,8 @@
 // Assessor login — email + password → POST /auth/login. Styled with the
 // mockup's tokens (paper field, cs-card, Wordmark, euc-deep primary button) so it
 // sits in the same design language as the worklist.
-import { useState } from 'react'
-import { login } from '../lib/consoleApi'
+import { useEffect, useRef, useState } from 'react'
+import { login, loginWithGoogle } from '../lib/consoleApi'
 import { Wordmark, CBtn } from '../components/atoms'
 
 export function LoginScreen({ onAuthed, notice }) {
@@ -10,6 +10,8 @@ export function LoginScreen({ onAuthed, notice }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState(null)
   const [busy, setBusy] = useState(false)
+  const googleButtonRef = useRef(null)
+  const googleClientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || ''
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -24,9 +26,70 @@ export function LoginScreen({ onAuthed, notice }) {
     }
   }
 
+  // Render Google Identity Services button (same /auth/google flow as the
+  // consumer app). Lets Google-only assessors — who never set a password — in.
+  useEffect(() => {
+    if (!googleClientId || !googleButtonRef.current) return
+
+    let cancelled = false
+    async function loadGoogleIdentity() {
+      if (!window.google?.accounts?.id) {
+        await new Promise((resolve, reject) => {
+          const existing = document.querySelector('script[data-ec-google-identity]')
+          if (existing) {
+            existing.addEventListener('load', resolve, { once: true })
+            existing.addEventListener('error', reject, { once: true })
+            return
+          }
+          const script = document.createElement('script')
+          script.src = 'https://accounts.google.com/gsi/client'
+          script.async = true
+          script.defer = true
+          script.dataset.ecGoogleIdentity = 'true'
+          script.onload = resolve
+          script.onerror = reject
+          document.head.appendChild(script)
+        })
+      }
+      if (cancelled || !window.google?.accounts?.id || !googleButtonRef.current) return
+
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: async (response) => {
+          if (!response?.credential) return
+          setBusy(true)
+          setError(null)
+          try {
+            await loginWithGoogle(response.credential)
+            onAuthed()
+          } catch (err) {
+            setError(err.message || 'Google sign-in failed. Please try again.')
+            setBusy(false)
+          }
+        },
+      })
+      googleButtonRef.current.innerHTML = ''
+      window.google.accounts.id.renderButton(googleButtonRef.current, {
+        type: 'standard',
+        theme: 'outline',
+        size: 'large',
+        text: 'signin_with',
+        shape: 'pill',
+        width: Math.min(328, googleButtonRef.current.clientWidth || 328),
+      })
+    }
+
+    loadGoogleIdentity().catch(() => {
+      if (!cancelled) setError('Google sign-in could not be loaded.')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [googleClientId, onAuthed])
+
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24, background: 'var(--paper)' }}>
-      <div className="cs-card" style={{ width: 380, padding: '26px 26px 24px', background: 'var(--panel)', boxShadow: '0 18px 50px rgba(38,39,31,0.12)' }}>
+      <div className="cs-card" style={{ width: '100%', maxWidth: 380, padding: '26px 26px 24px', background: 'var(--panel)', boxShadow: '0 18px 50px rgba(38,39,31,0.12)' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 18 }}>
           <Wordmark size={22} />
           <span
@@ -66,6 +129,33 @@ export function LoginScreen({ onAuthed, notice }) {
           >
             {notice}
           </div>
+        )}
+
+        {googleClientId && (
+          <>
+            <div
+              ref={googleButtonRef}
+              aria-label="Sign in with Google"
+              style={{ minHeight: 40, display: 'flex', justifyContent: 'center', marginBottom: 16 }}
+            />
+            <div
+              style={{
+                margin: '0 0 16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 10,
+                color: 'var(--ink-soft)',
+                fontSize: 11,
+                fontWeight: 700,
+                letterSpacing: '0.08em',
+                textTransform: 'uppercase',
+              }}
+            >
+              <span style={{ height: 1, flex: 1, background: 'var(--line)' }} />
+              <span>or</span>
+              <span style={{ height: 1, flex: 1, background: 'var(--line)' }} />
+            </div>
+          </>
         )}
 
         <form onSubmit={onSubmit}>

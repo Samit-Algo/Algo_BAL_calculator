@@ -4,6 +4,7 @@
 // static accreditation line action.
 import { Wordmark, CSectionLabel } from './atoms'
 import { Glyph } from './Glyph'
+import { useIsMobile } from '../lib/useIsMobile'
 
 function initials(name, email) {
   const src = (name || email || '').trim()
@@ -14,16 +15,17 @@ function initials(name, email) {
 }
 
 export function Chrome({ me, breadcrumb, onHome, onSignOut, children, fill = false }) {
+  const isMobile = useIsMobile()
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', minWidth: 1080, fontFamily: 'var(--font-ui)' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', minWidth: isMobile ? 0 : 1080, fontFamily: 'var(--font-ui)' }}>
       <div
         style={{
-          height: 46,
+          minHeight: 46,
           flexShrink: 0,
           display: 'flex',
           alignItems: 'center',
-          gap: 14,
-          padding: '0 16px',
+          gap: isMobile ? 10 : 14,
+          padding: isMobile ? '0 12px' : '0 16px',
           borderBottom: '1px solid var(--line)',
           background: 'var(--panel)',
         }}
@@ -49,7 +51,7 @@ export function Chrome({ me, breadcrumb, onHome, onSignOut, children, fill = fal
           </span>
         </button>
 
-        {breadcrumb && (
+        {breadcrumb && !isMobile && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12.5, color: 'var(--ink-soft)', minWidth: 0 }}>
             <button
               className="ec-press"
@@ -84,12 +86,14 @@ export function Chrome({ me, breadcrumb, onHome, onSignOut, children, fill = fal
           >
             {initials(me?.name, me?.email)}
           </span>
-          <span style={{ fontSize: 12, color: 'var(--ink)', fontWeight: 600 }}>
-            {me?.name || me?.email}{' '}
-            <span className="cs-mono" style={{ color: 'var(--ink-soft)', fontWeight: 400, fontSize: 10.5 }}>
-              · {me?.jurisdiction || '—'} assessor
+          {!isMobile && (
+            <span style={{ fontSize: 12, color: 'var(--ink)', fontWeight: 600 }}>
+              {me?.name || me?.email}{' '}
+              <span className="cs-mono" style={{ color: 'var(--ink-soft)', fontWeight: 400, fontSize: 10.5 }}>
+                · {me?.jurisdiction || '—'} assessor
+              </span>
             </span>
-          </span>
+          )}
           <button
             className="ec-press"
             onClick={onSignOut}
@@ -112,8 +116,10 @@ export function Chrome({ me, breadcrumb, onHome, onSignOut, children, fill = fal
       </div>
 
       {fill ? (
-        // Cockpit mode: no outer scroll — the workspace's two panes manage their
-        // own scrolling, exactly as the mockup's full-height shell does.
+        // Cockpit mode: no outer scroll — the workspace's panes manage their own
+        // scrolling, exactly as the mockup's full-height shell does. On phones the
+        // panes stack (map fixed on top, evidence scrolls beneath) but the shell
+        // stays bounded so the map can pin.
         <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
           {children}
         </div>

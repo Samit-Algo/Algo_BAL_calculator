@@ -150,6 +150,34 @@ export async function login(email, password) {
   return tokens
 }
 
+// Exchange a Google Identity Services ID token for EmberCheck app tokens. Same
+// /auth/google endpoint the consumer app uses — lets Google-only assessors (who
+// never had a typeable password) sign in to the Console.
+export async function loginWithGoogle(idToken) {
+  let response
+  try {
+    response = await fetch(`${API_BASE}/auth/google`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: idToken }),
+    })
+  } catch {
+    throw new Error('We couldn’t reach the server. Check your connection and try again.')
+  }
+  if (!response.ok) {
+    const err = new Error(
+      response.status === 400
+        ? 'This Google account can’t sign in.'
+        : 'Google sign-in could not be verified. Please try again.',
+    )
+    err.status = response.status
+    throw err
+  }
+  const tokens = await response.json()
+  setTokens(tokens)
+  return tokens
+}
+
 export async function logout() {
   const refresh_token = getRefreshToken()
   try {

@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { getWorklist } from '../lib/consoleApi'
 import { CStatusChip, CSectionLabel, CBtn } from '../components/atoms'
 import { Glyph } from '../components/Glyph'
+import { useIsMobile } from '../lib/useIsMobile'
 
 // Filter tabs map 1:1 to the backend's review ui_states (CONSOLE-B3.2). The third
 // tuple element is the backend ?state= value (null = All) — filtering happens
@@ -33,6 +34,7 @@ function formatDue(iso) {
 }
 
 export function WorklistScreen({ onOpenJob, toast }) {
+  const isMobile = useIsMobile()
   const [filter, setFilter] = useState('all')
   // The fetch result is tagged with the filter it belongs to. Loading is then
   // DERIVED — no synchronous setState in the effect — by checking whether the
@@ -62,8 +64,8 @@ export function WorklistScreen({ onOpenJob, toast }) {
   const ready = rows.filter((j) => j.ui_state === 'ready-to-sign').length
 
   return (
-    <div data-screen-label="Worklist" style={{ maxWidth: 1060, margin: '0 auto', padding: '26px 28px 48px' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, marginBottom: 18 }}>
+    <div data-screen-label="Worklist" style={{ maxWidth: 1060, margin: '0 auto', padding: isMobile ? '18px 16px 40px' : '26px 28px 48px' }}>
+      <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', alignItems: isMobile ? 'stretch' : 'flex-end', justifyContent: 'space-between', gap: 16, marginBottom: 18 }}>
         <div>
           <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, margin: '0 0 4px', color: 'var(--ink)', letterSpacing: '-0.01em' }}>
             Worklist
@@ -76,7 +78,7 @@ export function WorklistScreen({ onOpenJob, toast }) {
             {ready > 0 ? ` · ${ready} ready to sign` : ''}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <CBtn variant="quiet" icon="doc" onClick={() => toast('Batch import accepts a CSV of lots — not wired in this prototype')}>
             Import batch (CSV)
           </CBtn>
@@ -86,7 +88,7 @@ export function WorklistScreen({ onOpenJob, toast }) {
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
+      <div className="ec-scroll" style={{ display: 'flex', gap: 6, marginBottom: 14, overflowX: isMobile ? 'auto' : 'visible', paddingBottom: isMobile ? 4 : 0 }}>
         {FILTERS.map(([id, label]) => (
           <button
             key={id}
@@ -111,20 +113,22 @@ export function WorklistScreen({ onOpenJob, toast }) {
       </div>
 
       <div className="cs-card" style={{ overflow: 'hidden' }}>
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: GRID,
-            gap: 12,
-            padding: '9px 16px',
-            borderBottom: '1px solid var(--line)',
-            background: 'color-mix(in oklab, var(--ink) 4%, transparent)',
-          }}
-        >
-          {['Job', 'Client', 'State', 'Flags', 'Photos', 'Due', ''].map((h, i) => (
-            <CSectionLabel key={i}>{h}</CSectionLabel>
-          ))}
-        </div>
+        {!isMobile && (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: GRID,
+              gap: 12,
+              padding: '9px 16px',
+              borderBottom: '1px solid var(--line)',
+              background: 'color-mix(in oklab, var(--ink) 4%, transparent)',
+            }}
+          >
+            {['Job', 'Client', 'State', 'Flags', 'Photos', 'Due', ''].map((h, i) => (
+              <CSectionLabel key={i}>{h}</CSectionLabel>
+            ))}
+          </div>
+        )}
 
         {status === 'loading' && (
           <div style={{ padding: '40px 16px', textAlign: 'center', fontSize: 13, color: 'var(--ink-soft)' }}>
@@ -144,7 +148,49 @@ export function WorklistScreen({ onOpenJob, toast }) {
           </div>
         )}
 
-        {status === 'ready' &&
+        {status === 'ready' && isMobile &&
+          rows.map((j, i) => (
+            <div
+              key={j.id}
+              className="cs-rowhover ec-press"
+              onClick={() => onOpenJob(j)}
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 8,
+                padding: '13px 14px',
+                cursor: 'pointer',
+                borderBottom: i < rows.length - 1 ? '1px solid var(--line)' : 'none',
+                background: 'transparent',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)' }}>{j.address}</div>
+                  <div className="cs-mono" style={{ fontSize: 10.5, color: 'var(--ink-soft)', marginTop: 1 }}>
+                    {j.job_number} · {j.state || '—'} · {j.client_name || '—'}
+                  </div>
+                </div>
+                <CStatusChip state={j.ui_state} />
+              </div>
+              {(j.outstanding || []).map((o) => (
+                <div key={o} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, fontWeight: 600, color: '#93431F' }}>
+                  <span style={{ width: 6, height: 6, borderRadius: 99, background: '#B06F3A', flexShrink: 0 }} />
+                  {o}
+                </div>
+              ))}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', fontSize: 12, color: 'var(--ink-soft)' }}>
+                <span style={{ fontWeight: 700, color: j.flags ? '#93431F' : 'var(--ink-soft)', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  {j.flags ? <span style={{ width: 7, height: 7, borderRadius: 99, background: '#B06F3A' }} /> : null}
+                  {j.flags ? `${j.flags} flagged` : 'No flags'}
+                </span>
+                <span className="cs-mono">{j.photos_done} of {j.photos_total ?? 4} photos</span>
+                <span>Due {formatDue(j.due)}</span>
+              </div>
+            </div>
+          ))}
+
+        {status === 'ready' && !isMobile &&
           rows.map((j, i) => (
             <div
               key={j.id}

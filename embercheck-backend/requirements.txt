@@ -14,3 +14,6 @@ fastapi-users[beanie]==15.0.5
 beanie==2.1.0
 pydantic-settings==2.14.1
 google-auth==2.43.0
+
+# P0 sign-off: pure-Python PDF certificate generation (no native deps).
+reportlab==4.2.5

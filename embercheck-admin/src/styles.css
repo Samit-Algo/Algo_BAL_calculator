@@ -69,3 +69,11 @@ body {
   font-size: 12px;
   font-weight: 700;
 }
+
+/* Mobile: the detail screen's two-column card grid collapses to one column so
+   each card gets the full width on a phone. */
+@media (max-width: 720px) {
+  .a-detail-grid {
+    grid-template-columns: 1fr !important;
+  }
+}

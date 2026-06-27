@@ -3,7 +3,7 @@
 // implied — it's the user's own cases (the auth'd GET /cases drives it).
 
 import { useEffect, useState } from 'react'
-import { deleteCase, listCases } from '../lib/cases'
+import { deleteCase, listCases, getCaseReportURL } from '../lib/cases'
 import { balColor } from '../lib/bal'
 import ECButton from './ui/ECButton'
 import ConfirmModal from './ui/ConfirmModal'
@@ -42,8 +42,26 @@ function CaseCard({ case_, onOpen, onDelete }) {
   // The card itself is the (large) open button; the delete control is a sibling
   // overlay (a button can't be nested inside another button). It sits in the
   // bottom-right corner, clear of the "Updated …" text on the left.
+  const [downloading, setDownloading] = useState(false)
+
+  async function handleDownload(e) {
+    e.stopPropagation()
+    if (downloading) return
+    setDownloading(true)
+    try {
+      const url = await getCaseReportURL(case_.id)
+      if (url) {
+        window.open(url, '_blank', 'noopener')
+        setTimeout(() => URL.revokeObjectURL(url), 60000)
+      }
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   return (
-    <div style={{ position: 'relative' }}>
+    <div>
+      <div style={{ position: 'relative' }}>
       <button
         type="button"
         className="ec-press"
@@ -151,6 +169,37 @@ function CaseCard({ case_, onOpen, onDelete }) {
       >
         <Glyph name="trash" size={16} />
       </button>
+      </div>
+
+      {/* Signed determination (P0): the consumer can download the issued PDF.
+          A sibling of the open-button so the download click is its own control. */}
+      {case_.signed && (
+        <div
+          style={{
+            margin: '0 0 6px',
+            padding: '10px 12px',
+            borderRadius: 12,
+            background: 'color-mix(in oklab, var(--euc-deep) 8%, transparent)',
+            border: '1px solid color-mix(in oklab, var(--euc-deep) 22%, var(--line))',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 10,
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ minWidth: 0, fontSize: 12, color: 'var(--ink-soft)', lineHeight: 1.4 }}>
+            <div style={{ fontWeight: 700, color: 'var(--euc-deep)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Glyph name="check" size={14} /> Signed determination
+            </div>
+            {case_.signoff?.assessor_name ? `By ${case_.signoff.assessor_name}` : 'Issued'}
+            {case_.signoff?.signed_at ? ` · ${formatDate(case_.signoff.signed_at)}` : ''}
+          </div>
+          <ECButton variant="secondary" small icon="doc" onClick={handleDownload} disabled={downloading}>
+            {downloading ? 'Opening…' : 'Download report'}
+          </ECButton>
+        </div>
+      )}
     </div>
   )
 }

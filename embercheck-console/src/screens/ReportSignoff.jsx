@@ -6,6 +6,7 @@
 import { useState } from 'react'
 import { CSectionLabel, CBtn, CBALChip, CStatusChip, Wordmark } from '../components/atoms'
 import { Glyph } from '../components/Glyph'
+import { signCase, getCaseReport } from '../lib/consoleApi'
 
 const SIDES = ['North', 'East', 'South', 'West']
 
@@ -29,9 +30,45 @@ function effectiveVeg(s) {
   return s.overrides?.vegetation_class || s.combined_classification || s.gis_draft_classification || '—'
 }
 
-export function ReportSignoff({ data, me, onGotoWorkspace }) {
+export function ReportSignoff({ data, me, onGotoWorkspace, isMobile, caseId, onSigned }) {
   const [template, setTemplate] = useState('nsw')
   const [attest, setAttest] = useState(false)
+  const [signing, setSigning] = useState(false)
+  const [signError, setSignError] = useState(null)
+  const [downloading, setDownloading] = useState(false)
+
+  const signed = data.status === 'COMPLETE'
+  const signoff = data.signoff || null
+
+  async function handleSign() {
+    if (signing || signed) return
+    setSigning(true)
+    setSignError(null)
+    try {
+      const resp = await signCase(caseId, { attestation: true })
+      onSigned?.(resp)
+    } catch (e) {
+      setSignError(e.message)
+    } finally {
+      setSigning(false)
+    }
+  }
+
+  async function handleDownload() {
+    if (downloading) return
+    setDownloading(true)
+    try {
+      const url = await getCaseReport(caseId)
+      if (url) {
+        window.open(url, '_blank', 'noopener')
+        setTimeout(() => URL.revokeObjectURL(url), 60000)
+      } else {
+        setSignError('Could not open the report. Please try again.')
+      }
+    } finally {
+      setDownloading(false)
+    }
+  }
 
   const sectors = data.sectors || []
   const bySide = Object.fromEntries(sectors.map((s) => [s.compass_side, s]))
@@ -42,9 +79,9 @@ export function ReportSignoff({ data, me, onGotoWorkspace }) {
 
   return (
     <div className="ec-scroll" style={{ position: 'absolute', inset: 0, overflowY: 'auto' }}>
-      <div style={{ maxWidth: 1060, margin: '0 auto', padding: '22px 28px 48px', display: 'flex', gap: 22, alignItems: 'flex-start' }}>
+      <div style={{ maxWidth: 1060, margin: '0 auto', padding: isMobile ? '18px 14px 40px' : '22px 28px 48px', display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 16 : 22, alignItems: isMobile ? 'stretch' : 'flex-start' }}>
         {/* left: settings + sign-off */}
-        <div style={{ width: 330, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div style={{ width: isMobile ? '100%' : 330, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div>
             <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 21, margin: '0 0 3px', color: 'var(--ink)' }}>Report &amp; sign-off</h2>
             <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.5 }}>The system drafted. You determine.</div>
@@ -124,18 +161,56 @@ export function ReportSignoff({ data, me, onGotoWorkspace }) {
 
           <div className="cs-card" style={{ padding: '14px 16px' }}>
             <CSectionLabel style={{ marginBottom: 10 }}>Sign-off</CSectionLabel>
-            <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', marginBottom: 12 }}>
-              <input type="checkbox" checked={attest} onChange={(e) => setAttest(e.target.checked)} style={{ marginTop: 2, accentColor: '#3C4733' }} />
-              <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--ink)' }}>
-                I have reviewed the evidence and each elevation’s classification. This determination is mine, made under my accreditation.
-              </span>
-            </label>
-            <CBtn variant="primary" disabled title="Signing lands in a later step" style={{ width: '100%', minHeight: 38 }}>
-              Sign and issue determination
-            </CBtn>
-            <div style={{ marginTop: 8, fontSize: 11, color: 'var(--ink-soft)' }}>
-              Read-only preview — confirming sides &amp; signing land in a later step.
-            </div>
+
+            {signed ? (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ display: 'flex', color: 'var(--euc-deep)' }}><Glyph name="check" size={16} stroke={2.6} /></span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--euc-deep)' }}>Signed &amp; issued</span>
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--ink-soft)', lineHeight: 1.5, marginBottom: 12 }}>
+                  {signoff?.report_number && (
+                    <div className="cs-mono" style={{ color: 'var(--ink)' }}>{signoff.report_number}</div>
+                  )}
+                  {signoff?.signed_at && <div>Issued {fmtDay(signoff.signed_at)}</div>}
+                  {signoff?.assessor_name && <div>By {signoff.assessor_name}</div>}
+                </div>
+                <CBtn variant="primary" icon="doc" onClick={handleDownload} disabled={downloading} style={{ width: '100%', minHeight: 38 }}>
+                  {downloading ? 'Opening…' : 'Download PDF'}
+                </CBtn>
+                <div style={{ marginTop: 8, fontSize: 11, color: 'var(--ink-soft)' }}>
+                  This determination is signed and the case is locked to further edits.
+                </div>
+              </>
+            ) : (
+              <>
+                <label style={{ display: 'flex', gap: 10, alignItems: 'flex-start', cursor: 'pointer', marginBottom: 12 }}>
+                  <input type="checkbox" checked={attest} onChange={(e) => setAttest(e.target.checked)} style={{ marginTop: 2, accentColor: '#3C4733' }} />
+                  <span style={{ fontSize: 12, lineHeight: 1.5, color: 'var(--ink)' }}>
+                    I have reviewed the evidence and each elevation’s classification. This determination is mine, made under my accreditation.
+                  </span>
+                </label>
+                <CBtn
+                  variant="primary"
+                  onClick={handleSign}
+                  disabled={!attest || !data.can_ready_to_sign || signing}
+                  title={!data.can_ready_to_sign ? 'Resolve the outstanding tasks before signing' : 'Sign and issue the determination'}
+                  style={{ width: '100%', minHeight: 38 }}
+                >
+                  {signing ? 'Signing…' : 'Sign and issue determination'}
+                </CBtn>
+                {signError && (
+                  <div style={{ marginTop: 8, padding: '7px 10px', borderRadius: 8, background: 'color-mix(in oklab, #B06F3A 12%, transparent)', color: '#93431F', fontSize: 11.5, fontWeight: 600 }}>
+                    {signError}
+                  </div>
+                )}
+                <div style={{ marginTop: 8, fontSize: 11, color: 'var(--ink-soft)' }}>
+                  {data.can_ready_to_sign
+                    ? 'Signing freezes the determination and issues the PDF to the client.'
+                    : 'Mark every elevation reviewed and clear open requests to enable signing.'}
+                </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -157,13 +232,16 @@ export function ReportSignoff({ data, me, onGotoWorkspace }) {
             )}
           </div>
 
-          <div style={{ background: '#FDFCF6', border: '1px solid var(--line)', borderRadius: 6, boxShadow: '0 14px 40px rgba(40,36,24,0.13)', padding: '38px 44px', position: 'relative', overflow: 'hidden' }}>
-            {/* always-on DRAFT watermark (nothing is signed here) */}
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-              <span style={{ transform: 'rotate(-24deg)', fontSize: 38, fontWeight: 800, letterSpacing: '0.14em', color: 'color-mix(in oklab, #B06F3A 26%, transparent)', border: '3px dashed color-mix(in oklab, #B06F3A 30%, transparent)', borderRadius: 12, padding: '10px 28px', whiteSpace: 'nowrap' }}>
-                DRAFT — NOT A DETERMINATION
-              </span>
-            </div>
+          <div style={{ background: '#FDFCF6', border: '1px solid var(--line)', borderRadius: 6, boxShadow: '0 14px 40px rgba(40,36,24,0.13)', padding: isMobile ? '22px 18px' : '38px 44px', position: 'relative', overflow: 'hidden' }}>
+            {/* DRAFT watermark while unsigned; once signed the preview is the
+                issued document (the downloadable PDF is the authoritative copy). */}
+            {!signed && (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
+                <span style={{ transform: 'rotate(-24deg)', fontSize: isMobile ? 22 : 38, fontWeight: 800, letterSpacing: '0.14em', color: 'color-mix(in oklab, #B06F3A 26%, transparent)', border: '3px dashed color-mix(in oklab, #B06F3A 30%, transparent)', borderRadius: 12, padding: isMobile ? '8px 16px' : '10px 28px', whiteSpace: 'nowrap' }}>
+                  DRAFT — NOT A DETERMINATION
+                </span>
+              </div>
+            )}
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid var(--ink)', paddingBottom: 14, marginBottom: 16 }}>
               <div>
@@ -175,7 +253,7 @@ export function ReportSignoff({ data, me, onGotoWorkspace }) {
               <Wordmark size={20} />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14, marginBottom: 16 }}>
               <div>
                 <CSectionLabel style={{ marginBottom: 3 }}>Subject site</CSectionLabel>
                 <div style={{ fontSize: 12.5, color: 'var(--ink)', lineHeight: 1.5 }}>
@@ -202,7 +280,8 @@ export function ReportSignoff({ data, me, onGotoWorkspace }) {
             </p>
 
             <CSectionLabel style={{ marginBottom: 5 }}>Data sources</CSectionLabel>
-            <table className="cs-doctable" style={{ marginBottom: 16 }}>
+            <div className="ec-scroll" style={{ overflowX: 'auto', marginBottom: 16 }}>
+            <table className="cs-doctable">
               <thead>
                 <tr><th>Source</th><th>Vintage</th><th>Resolution</th></tr>
               </thead>
@@ -213,9 +292,11 @@ export function ReportSignoff({ data, me, onGotoWorkspace }) {
                 <tr><td>Site photography (per elevation, where supplied)</td><td className="cs-mono">on file</td><td className="cs-mono">—</td></tr>
               </tbody>
             </table>
+            </div>
 
             <CSectionLabel style={{ marginBottom: 5 }}>Determination by elevation</CSectionLabel>
-            <table className="cs-doctable" style={{ marginBottom: 18 }}>
+            <div className="ec-scroll" style={{ overflowX: 'auto', marginBottom: 18 }}>
+            <table className="cs-doctable">
               <thead>
                 <tr><th>Elevation</th><th>Vegetation</th><th>Slope</th><th>Separation</th><th>BAL</th><th>Basis</th></tr>
               </thead>
@@ -240,6 +321,7 @@ export function ReportSignoff({ data, me, onGotoWorkspace }) {
                 })}
               </tbody>
             </table>
+            </div>
 
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, padding: '12px 16px', borderRadius: 8, background: 'color-mix(in oklab, var(--ink) 5%, transparent)', marginBottom: 18 }}>
               <div style={{ fontSize: 12, color: 'var(--ink)' }}>
@@ -252,8 +334,18 @@ export function ReportSignoff({ data, me, onGotoWorkspace }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderTop: '1px solid var(--line)', paddingTop: 14 }}>
               <div>
                 <CSectionLabel style={{ marginBottom: 4 }}>Assessor signature</CSectionLabel>
-                <div style={{ width: 190, borderBottom: '1.5px solid var(--ink-soft)', height: 24 }} />
-                <div className="cs-mono" style={{ fontSize: 10, color: 'var(--ink-soft)', marginTop: 3 }}>Unsigned</div>
+                <div style={{ minWidth: 190, borderBottom: '1.5px solid var(--ink-soft)', height: 24, display: 'flex', alignItems: 'flex-end', paddingBottom: 2 }}>
+                  {signed && (
+                    <span style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, color: 'var(--ink)' }}>
+                      {signoff?.assessor_name || me?.name || me?.email}
+                    </span>
+                  )}
+                </div>
+                <div className="cs-mono" style={{ fontSize: 10, color: signed ? 'var(--euc-deep)' : 'var(--ink-soft)', marginTop: 3 }}>
+                  {signed
+                    ? `Signed ${fmtDay(signoff?.signed_at)}${signoff?.report_number ? ' · ' + signoff.report_number : ''}`
+                    : 'Unsigned'}
+                </div>
               </div>
               <div className="cs-mono" style={{ fontSize: 9.5, color: 'var(--ink-soft)', textAlign: 'right', maxWidth: 280, lineHeight: 1.5 }}>
                 Prepared with EmberCheck Console. The system proposes; the accredited assessor determines.

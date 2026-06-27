@@ -321,6 +321,30 @@ async def get_case_photo(
     return FileResponse(full, media_type="image/jpeg")
 
 
+@router.get("/{case_id}/report")
+async def get_case_report(
+    case_id: str,
+    user: User = Depends(current_active_user),
+):
+    """Download the signed PDF determination for the caller's own case (P0).
+    Ownership-checked (404 for an unknown/other user's case); an unsigned case →
+    404 (no report yet). Path-traversal-guarded; the PDF bytes live on disk."""
+    case = await get_owned_case_or_404(case_id, user.id)
+
+    so = getattr(case, "signoff", None)
+    if so is None or not so.report_path:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found.")
+
+    base = Path(media_settings.PHOTO_STORAGE_DIR).resolve()
+    full = (base / so.report_path).resolve()
+    if base != full and base not in full.parents:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found.")
+    if not full.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Report not found.")
+
+    return FileResponse(full, media_type="application/pdf", filename=f"{so.report_number}.pdf")
+
+
 def _build_analysis_logger() -> logging.Logger:
     """A logger for the sector-photo background analysis task, so a silent
     failure (VLM error, reconcile exception, task never scheduled) is never
@@ -486,6 +510,29 @@ async def _run_sector_analysis(case_id: str, compass_side: str) -> None:
             await _mark_side_error(case_id, compass_side)
 
 
+# ── consumer-side auto status demotion ──────────────────────────────────────
+# When a consumer changes a side's evidence (new/deleted photo, override) it
+# invalidates any assessor review of that side (SectorEvidence.invalidate_review).
+# If the case had reached READY_TO_SIGN, the determination is no longer ready, so
+# it must drop back to UNDER_REVIEW — the mirror of the assessor-side auto-advance.
+# Returns the previous status (str) if it demoted, else None (caller audits).
+def _reopen_for_review(case: Case, cleared: bool) -> str | None:
+    if cleared and case.status in (CaseStatus.READY_TO_SIGN, CaseStatus.APPROVED):
+        prev = case.status.value
+        case.status = CaseStatus.UNDER_REVIEW
+        return prev
+    return None
+
+
+async def _audit_auto_reopen(case: Case, previous: str) -> None:
+    await CaseAuditEvent(
+        case_id=case.id, assessor_id=None, assessor_email="System",
+        compass_side=None, kind="auto_resume",
+        changes=[AuditChange(field="status", previous=previous, new="UNDER_REVIEW")],
+        reason=None,
+    ).insert()
+
+
 @router.post("/{case_id}/sectors/{compass_side}/photos")
 async def upload_sector_photos(
     case_id: str,
@@ -550,7 +597,7 @@ async def upload_sector_photos(
     # New evidence invalidates any prior assessor review of THIS side (see
     # SectorEvidence.invalidate_review): the photo the assessor confirmed is no
     # longer the whole story, so the side re-opens for review.
-    side_ev.invalidate_review()
+    cleared = side_ev.invalidate_review()
 
     # CONSOLE-B3.3 automatic review resume (§5): if the assessor had asked for more
     # photos and the consumer has now supplied evidence for a requested side (or for
@@ -562,10 +609,15 @@ async def upload_sector_photos(
     review_resumed = case.status in (CaseStatus.NEEDS_MORE_PHOTOS, CaseStatus.CHANGES_REQUESTED) and (
         not requested or compass_side in requested
     )
+    reopened_prev = None
     if review_resumed:
         case.status = CaseStatus.UNDER_REVIEW
         case.review_reason = None
         case.photo_request_sides = []
+    else:
+        # Not a photo-request resume, but a new photo on a READY_TO_SIGN case
+        # still invalidates that side's review → drop back to UNDER_REVIEW.
+        reopened_prev = _reopen_for_review(case, cleared)
 
     case.updated_at = now
     await case.save()
@@ -580,6 +632,8 @@ async def upload_sector_photos(
             changes=[AuditChange(field="status", previous="NEEDS_MORE_PHOTOS", new="UNDER_REVIEW")],
             reason=None,
         ).insert()
+    elif reopened_prev:
+        await _audit_auto_reopen(case, reopened_prev)
 
     background_tasks.add_task(_run_sector_analysis, str(case.id), compass_side)
     _analysis_log.info(
@@ -691,7 +745,7 @@ async def delete_sector_photo(
     side_ev.review_flags = flags
     side_ev.analysis_status = "complete" if remaining else None
     # The evidence the assessor reviewed has changed — re-open the side.
-    side_ev.invalidate_review()
+    cleared = side_ev.invalidate_review()
 
     # Re-run reconcile, then recompute the headline from scratch (raise OR lower).
     if case.boundary_assessment and case.sector_evidence:
@@ -700,8 +754,11 @@ async def delete_sector_photo(
         )
         recompute_case_headline(case)
 
+    reopened_prev = _reopen_for_review(case, cleared)
     case.updated_at = datetime.now(timezone.utc)
     await case.save()
+    if reopened_prev:
+        await _audit_auto_reopen(case, reopened_prev)
 
     return {
         "compass_side": compass_side,
@@ -813,7 +870,7 @@ async def set_sector_override(
         override_at=datetime.now(timezone.utc),
     )
     # A consumer override changes this side's inputs — invalidate any assessor review.
-    side_ev.invalidate_review()
+    cleared = side_ev.invalidate_review()
 
     if case.boundary_assessment and case.sector_evidence:
         reconcile_all_sectors(
@@ -823,8 +880,11 @@ async def set_sector_override(
         # reflects the current assessment, not only ratcheting up.
         recompute_case_headline(case)
 
+    reopened_prev = _reopen_for_review(case, cleared)
     case.updated_at = datetime.now(timezone.utc)
     await case.save()
+    if reopened_prev:
+        await _audit_auto_reopen(case, reopened_prev)
 
     fresh = _get_or_create_side(case, compass_side)
     return _side_override_response(compass_side, fresh, case)
@@ -848,7 +908,7 @@ async def clear_sector_override(
     side_ev = _get_or_create_side(case, compass_side)
     side_ev.overrides = None
     # Clearing the override changes this side's inputs — invalidate any assessor review.
-    side_ev.invalidate_review()
+    cleared = side_ev.invalidate_review()
 
     if case.boundary_assessment and case.sector_evidence:
         reconcile_all_sectors(
@@ -858,8 +918,11 @@ async def clear_sector_override(
         # headline from scratch (raise OR lower) as the worst current read.
         recompute_case_headline(case)
 
+    reopened_prev = _reopen_for_review(case, cleared)
     case.updated_at = datetime.now(timezone.utc)
     await case.save()
+    if reopened_prev:
+        await _audit_auto_reopen(case, reopened_prev)
 
     fresh = _get_or_create_side(case, compass_side)
     return _side_override_response(compass_side, fresh, case)

@@ -9,7 +9,7 @@
 #
 # Every route is admin-only (current_admin: 401 no token / 403 non-admin).
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from beanie import PydanticObjectId
@@ -25,12 +25,19 @@ from app.config import settings as media_settings
 from app.models.admin_audit import AdminAuditEvent
 from app.models.assessor_profile import AssessorProfile, AssessorStatus
 from app.models.audit import AuditChange
+from app.models.case import Case, CaseStatus
 from app.models.user import User
 from app.schemas.admin import (
+    ActivityItem,
     AdminActionRequest,
     AdminApplicationDetail,
     AdminApplicationSummary,
+    AdminKpis,
     AdminMe,
+    AdminOverview,
+    CountBucket,
+    MapPoint,
+    TimelinePoint,
 )
 from app.schemas.user import UserCreate
 
@@ -164,6 +171,161 @@ def _require_reason(body: AdminActionRequest, action: str) -> str:
 async def admin_me(admin: User = Depends(current_admin)) -> AdminMe:
     """Cheap gate check the admin app calls on load to decide who gets in."""
     return AdminMe(id=str(admin.id), email=admin.email, name=admin.name, role=admin.role)
+
+
+# ── overview dashboard ────────────────────────────────────────────────────────
+# One admin-gated aggregation endpoint powering the Overview screen. Everything is
+# computed in Mongo (counts + daily buckets) so the dashboard is a single fetch.
+
+# Case statuses that count as "in active assessor review" for the KPI tile.
+_IN_REVIEW_STATUSES = [
+    CaseStatus.SUBMITTED_TO_ASSESSOR,
+    CaseStatus.UNDER_REVIEW,
+    CaseStatus.NEEDS_MORE_PHOTOS,
+    CaseStatus.SITE_VISIT_REQUIRED,
+    CaseStatus.REFERRED_SPECIALIST,
+    CaseStatus.READY_TO_SIGN,
+    CaseStatus.CHANGES_REQUESTED,
+    CaseStatus.APPROVED,
+]
+
+
+async def _daily_counts(document_cls, date_field: str, since: datetime) -> dict[str, int]:
+    """Group a collection into {YYYY-MM-DD: count} buckets for rows whose
+    `date_field` is on/after `since`. Used to build the timeline series."""
+    rows = await document_cls.aggregate(
+        [
+            {"$match": {date_field: {"$gte": since, "$ne": None}}},
+            {
+                "$group": {
+                    "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": f"${date_field}"}},
+                    "count": {"$sum": 1},
+                }
+            },
+        ]
+    ).to_list()
+    return {r["_id"]: r["count"] for r in rows if r.get("_id")}
+
+
+async def _grouped_counts(document_cls, field: str) -> list[tuple[str, int]]:
+    """Group a collection by `field` → list of (value, count), commonest first.
+    A missing/null value buckets under an empty string for the caller to label."""
+    rows = await document_cls.aggregate(
+        [{"$group": {"_id": f"${field}", "count": {"$sum": 1}}}, {"$sort": {"count": -1}}]
+    ).to_list()
+    return [(r["_id"], r["count"]) for r in rows]
+
+
+@router.get("/overview", response_model=AdminOverview)
+async def overview(days: int = 30, admin: User = Depends(current_admin)) -> AdminOverview:
+    """Platform analytics for the admin Overview dashboard: KPI counters, a daily
+    activity timeline, BAL + status distributions, mapped property points, assessor
+    breakdowns and a recent-admin-activity feed. `days` sizes the timeline window."""
+    days = max(1, min(days, 365))
+    now = datetime.now(timezone.utc)
+    since = now - timedelta(days=days - 1)
+    window_start = since.replace(hour=0, minute=0, second=0, microsecond=0)
+
+    # KPI counters.
+    total_cases = await Case.find().count()
+    signed_cases = await Case.find(Case.status == CaseStatus.COMPLETE).count()
+    cases_in_review = await Case.find({"status": {"$in": [s.value for s in _IN_REVIEW_STATUSES]}}).count()
+    total_users = await User.find().count()
+    assessors_active = await AssessorProfile.find(AssessorProfile.status == AssessorStatus.APPROVED).count()
+    applications_pending = await AssessorProfile.find(AssessorProfile.status == AssessorStatus.PENDING).count()
+
+    kpis = AdminKpis(
+        total_cases=total_cases,
+        signed_cases=signed_cases,
+        cases_in_review=cases_in_review,
+        total_users=total_users,
+        assessors_active=assessors_active,
+        applications_pending=applications_pending,
+    )
+
+    # Cases by status (bar) and BAL distribution (pie).
+    cases_by_status = [
+        CountBucket(label=value or "Unknown", count=count)
+        for value, count in await _grouped_counts(Case, "status")
+    ]
+    bal_distribution = [
+        CountBucket(label=value or "Unrated", count=count)
+        for value, count in await _grouped_counts(Case, "bal_rating")
+    ]
+
+    # Timeline: cases / signoffs / signups per day, zero-filled across the window.
+    case_days = await _daily_counts(Case, "created_at", window_start)
+    signoff_days = await _daily_counts(Case, "signoff.signed_at", window_start)
+    signup_days = await _daily_counts(User, "created_at", window_start)
+    timeline: list[TimelinePoint] = []
+    for i in range(days):
+        key = (window_start + timedelta(days=i)).strftime("%Y-%m-%d")
+        timeline.append(
+            TimelinePoint(
+                date=key,
+                cases=case_days.get(key, 0),
+                signoffs=signoff_days.get(key, 0),
+                signups=signup_days.get(key, 0),
+            )
+        )
+
+    # Map points: assessed properties with coordinates (newest 500).
+    point_rows = await Case.aggregate(
+        [
+            {"$match": {"property.latitude": {"$ne": None}, "property.longitude": {"$ne": None}}},
+            {"$sort": {"created_at": -1}},
+            {"$limit": 500},
+            {
+                "$project": {
+                    "_id": 0,
+                    "lat": "$property.latitude",
+                    "lng": "$property.longitude",
+                    "rating": "$bal_rating",
+                    "address": "$property.address",
+                    "status": "$status",
+                }
+            },
+        ]
+    ).to_list()
+    map_points = [MapPoint(**r) for r in point_rows]
+
+    # Assessor breakdowns: by status, and by operating state (multikey unwind).
+    assessor_status = [
+        CountBucket(label=value or "Unknown", count=count)
+        for value, count in await _grouped_counts(AssessorProfile, "status")
+    ]
+    state_rows = await AssessorProfile.aggregate(
+        [
+            {"$unwind": "$operating_states"},
+            {"$group": {"_id": "$operating_states", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+        ]
+    ).to_list()
+    assessor_states = [CountBucket(label=r["_id"] or "—", count=r["count"]) for r in state_rows]
+
+    # Recent admin activity feed (newest 12).
+    events = await AdminAuditEvent.find().sort(-AdminAuditEvent.timestamp).limit(12).to_list()
+    recent_activity = [
+        ActivityItem(
+            action=e.action,
+            admin_email=e.admin_email,
+            target_email=e.target_email,
+            reason=e.reason,
+            timestamp=e.timestamp,
+        )
+        for e in events
+    ]
+
+    return AdminOverview(
+        kpis=kpis,
+        cases_by_status=cases_by_status,
+        bal_distribution=bal_distribution,
+        timeline=timeline,
+        map_points=map_points,
+        assessor_status=assessor_status,
+        assessor_states=assessor_states,
+        recent_activity=recent_activity,
+    )
 
 
 @router.get("/applications", response_model=list[AdminApplicationSummary])

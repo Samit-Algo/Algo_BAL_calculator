@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { ECCard, ECEyebrow } from './ui/ECCard'
 import ECButton from './ui/ECButton'
+import Glyph from './ui/Glyph'
 import { useAuth } from '../auth/AuthContext'
 import { listAssessorsForCase, submitCase } from '../lib/cases'
 
@@ -30,8 +31,9 @@ function RatingBadge() {
 
 // Modal: fetch the approved assessors for this case, let the consumer pick one,
 // and submit the case to them. States: loading | list | empty | submitting |
-// done | error.
-function ChooseAssessorModal({ caseId, onClose }) {
+// done | error. onSubmitted(updatedCase) fires once the submit succeeds so the
+// parent can flip the card into its terminal "submitted" state.
+function ChooseAssessorModal({ caseId, onClose, onSubmitted }) {
   const [phase, setPhase] = useState('loading') // loading|list|empty|done|error
   const [assessors, setAssessors] = useState([])
   const [error, setError] = useState(null)
@@ -59,9 +61,10 @@ function ChooseAssessorModal({ caseId, onClose }) {
     setSubmittingId(a.assessor_id)
     setError(null)
     try {
-      await submitCase(caseId, a.assessor_id)
+      const updated = await submitCase(caseId, a.assessor_id)
       setChosen(a)
       setPhase('done')
+      onSubmitted?.(updated)
     } catch (e) {
       setError(e.message)
       setSubmittingId(null)
@@ -157,18 +160,54 @@ function ChooseAssessorModal({ caseId, onClose }) {
   )
 }
 
+// Case statuses that mean the case has ALREADY been handed off to an assessor —
+// from the moment it's submitted through to a signed determination. Once a case
+// is in any of these states the consumer must not be re-offered the choose flow.
+const HANDED_OFF_STATUSES = new Set([
+  'SUBMITTED_TO_ASSESSOR', 'UNDER_REVIEW', 'NEEDS_MORE_PHOTOS', 'SITE_VISIT_REQUIRED',
+  'REFERRED_SPECIALIST', 'READY_TO_SIGN', 'CHANGES_REQUESTED', 'APPROVED', 'COMPLETE',
+])
+
+// The terminal panel shown once a case is with an assessor (or signed). Mirrors
+// the "Submitted for accredited assessment" copy in NextStepCard so the two
+// surfaces read the same. No choose CTA here — the hand-off already happened.
+function HandedOffCard({ signed }) {
+  return (
+    <ECCard>
+      <ECEyebrow n="4">Get it certified</ECEyebrow>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+        <span style={{ color: 'var(--euc-deep)', display: 'inline-flex' }}>
+          <Glyph name="check" size={20} />
+        </span>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 19, color: 'var(--ink)' }}>
+          {signed ? 'Certified by an accredited assessor' : 'Submitted for accredited assessment'}
+        </div>
+      </div>
+      <p style={{ margin: 0, fontSize: 14.5, lineHeight: 1.55, color: 'var(--ink-soft)' }}>
+        {signed
+          ? 'Your certified determination is ready. Open My Properties to download the signed report.'
+          : 'This assessment is with your chosen accredited assessor. They’ll review it and be in touch — you can track its progress in My Properties.'}
+      </p>
+    </ECCard>
+  )
+}
+
 // "Go to an accredited assessor" — now wired (Phase 4/5): routes through the
 // existing login flow, then opens the choose-assessor list and submits the case
 // to the chosen assessor. Needs the active case id; without one it asks the user
-// to save the assessment first.
-export default function AssessorHandoffCard({ caseId }) {
+// to save the assessment first. Once the case is already handed off (submitted /
+// in review / signed) it shows the terminal HandedOffCard instead, so the choose
+// flow can never be re-offered — including after closing and reopening the case.
+export default function AssessorHandoffCard({ caseId, caseStatus = null, assignedAssessorId = null, signed = false, onSubmitted }) {
   const { ensureAuthenticated } = useAuth()
   const [checking, setChecking] = useState(false)
   const [showChoose, setShowChoose] = useState(false)
   const [notice, setNotice] = useState(null)
 
+  const alreadyHandedOff = signed || !!assignedAssessorId || HANDED_OFF_STATUSES.has(caseStatus)
+
   async function handleClick() {
-    if (checking) return
+    if (checking || alreadyHandedOff) return
     setChecking(true)
     setNotice(null)
     try {
@@ -183,6 +222,8 @@ export default function AssessorHandoffCard({ caseId }) {
       setChecking(false)
     }
   }
+
+  if (alreadyHandedOff) return <HandedOffCard signed={signed} />
 
   return (
     <ECCard>
@@ -218,7 +259,13 @@ export default function AssessorHandoffCard({ caseId }) {
         </p>
       )}
 
-      {showChoose && caseId && <ChooseAssessorModal caseId={caseId} onClose={() => setShowChoose(false)} />}
+      {showChoose && caseId && (
+        <ChooseAssessorModal
+          caseId={caseId}
+          onClose={() => setShowChoose(false)}
+          onSubmitted={onSubmitted}
+        />
+      )}
     </ECCard>
   )
 }

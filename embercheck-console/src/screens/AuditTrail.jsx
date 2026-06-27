@@ -28,11 +28,11 @@ function fmtStamp(iso) {
   return `${WEEKDAYS[d.getDay()]} ${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()} · ${hh}:${mm}`
 }
 
-export function AuditTrail({ data }) {
+export function AuditTrail({ data, isMobile }) {
   const audit = data.audit || []
   return (
     <div className="ec-scroll" style={{ position: 'absolute', inset: 0, overflowY: 'auto' }}>
-      <div style={{ maxWidth: 820, margin: '0 auto', padding: '22px 28px 48px' }}>
+      <div style={{ maxWidth: 820, margin: '0 auto', padding: isMobile ? '18px 14px 40px' : '22px 28px 48px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 14, marginBottom: 16 }}>
           <div>
             <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 21, margin: '0 0 3px', color: 'var(--ink)' }}>Audit trail</h2>
