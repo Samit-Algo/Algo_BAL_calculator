@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<!--
+  EmberCheck BAL Assessment Report - the single authored template.
+  Filled by app/services/report_render.render_report_html() and shown verbatim
+  as the Console's live preview; the eventual signed PDF renders from this SAME
+  output so the preview and the issued document can never drift.
+  Layout follows a standard AS 3959 BAL report (site/report detail tables, a
+  per-plot photo evidence table, FDI + BAL calculation + BAL summary tables, and
+  the BAL-meaning reference), styled in the Ember palette.
+  Token syntax (Handlebars subset) is documented in report_render.py.
+  Honesty treatment (spec 13, never-false-low): PRELIMINARY badge while not
+  certified; any side resolved to worst-case Forest on low confidence carries the
+  verbatim forced-to-Forest line; the suggested-vs-signed line stays as authored.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>EmberCheck - BAL Assessment Report {{report.job_number}}</title>
+<style>
+  :root {
+    --cream: #F3EEDF;      /* Ember palette */
+    --forest: #3C4733;     /* header bands / determination chip */
+    --amber: #C28E3F;      /* section headings / accents */
+    --ink: #26271F;
+    --ink-soft: #5F6052;
+    --line: #DAD5C6;
+    --stripe: #F4F2EA;
+    --flag: #B06F3A;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    background: #fff;
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 12.5px;
+    line-height: 1.6;
+  }
+  .doc { max-width: 820px; margin: 0 auto; padding: 30px 40px 64px; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+
+  /* Branded header / footer */
+  .brandbar { display: flex; align-items: flex-start; justify-content: space-between; padding-bottom: 14px; }
+  .wordmark { font-weight: 800; letter-spacing: .01em; color: var(--forest); font-size: 22px; }
+  .wordmark .spark { color: var(--amber); }
+  .tagline { font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: var(--amber); font-weight: 700; margin-top: 2px; }
+  .contact { text-align: right; font-size: 10.5px; color: var(--ink-soft); line-height: 1.5; }
+  .footer { margin-top: 34px; padding-top: 10px; border-top: 2px solid var(--forest); font-size: 10px; color: var(--ink-soft); display: flex; justify-content: space-between; }
+  .footer b { color: var(--forest); }
+
+  h1 { font-size: 23px; line-height: 1.2; margin: 14px 0 14px; color: var(--ink); font-weight: 800; }
+  h2 { font-size: 14px; color: var(--amber); font-weight: 800; margin: 26px 0 8px; }
+  p { text-align: justify; margin: 0 0 11px; }
+  .sub { font-size: 11px; color: var(--ink-soft); }
+  /* Crisp, scannable bullet lists for the report narrative. */
+  ul.bul { margin: 6px 0 14px; padding-left: 20px; }
+  ul.bul li { margin: 0 0 6px; line-height: 1.55; }
+  ul.bul li::marker { color: var(--amber); }
+  ul.bul.tight li { margin-bottom: 3px; }
+  ul.bul .lead { font-weight: 700; color: var(--ink); }
+  .note { font-size: 11px; color: var(--ink-soft); margin: 4px 0 12px; }
+
+  /* Banded section tables (Site details / Report details / photo / data tables) */
+  table { width: 100%; border-collapse: collapse; margin: 6px 0 10px; }
+  .band th, .band-row {
+    background: var(--forest); color: #fff; font-weight: 700; text-align: left;
+    padding: 7px 11px; font-size: 12px;
+  }
+  .kvtable td { padding: 7px 11px; border-bottom: 1px solid #fff; font-size: 12px; vertical-align: top; }
+  .kvtable tr:nth-child(odd) td { background: var(--stripe); }
+  .kvtable tr:nth-child(even) td { background: #FAF9F4; }
+  .kvtable .k { font-weight: 700; width: 200px; color: var(--ink); }
+
+  .grid th, .grid td { padding: 7px 10px; font-size: 11.5px; vertical-align: top; text-align: left; }
+  .grid thead th { background: var(--forest); color: #fff; font-weight: 700; }
+  .grid tbody tr:nth-child(odd) td { background: var(--stripe); }
+  .grid td.bal { font-weight: 800; }
+  .flag-mark { color: var(--flag); font-weight: 800; }
+
+  /* PRELIMINARY honesty badge + headline determination */
+  .badge {
+    display: inline-block; margin: 4px 0 10px; padding: 7px 13px; border-radius: 7px;
+    background: color-mix(in oklab, var(--flag) 14%, transparent);
+    border: 1px solid color-mix(in oklab, var(--flag) 42%, transparent);
+    color: #7a3a1c; font-weight: 800; font-size: 12px; letter-spacing: .04em;
+  }
+  .headline {
+    display: flex; align-items: center; gap: 18px; padding: 16px 20px; border-radius: 10px;
+    background: var(--stripe); border: 1px solid var(--line); margin: 8px 0 12px;
+  }
+  .headline .lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: .12em; color: var(--ink-soft); }
+  .bal-chip { font-weight: 800; font-size: 28px; color: #fff; background: var(--forest); border-radius: 9px; padding: 8px 16px; white-space: nowrap; }
+  .sign-line { font-style: italic; color: var(--forest); font-weight: 700; }
+  .conservative-note { color: #7a3a1c; font-size: 11.5px; margin-top: 6px; }
+
+  /* Table 1 — per-plot photo evidence */
+  .plot { margin: 0 0 14px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+  .plot-head { display: flex; justify-content: space-between; background: var(--forest); color: #fff; padding: 7px 12px; font-weight: 700; font-size: 12px; }
+  .plot-body { display: flex; gap: 0; }
+  .plot-desc { flex: 1; padding: 12px 14px; font-size: 11.5px; background: var(--stripe); }
+  .plot-desc .label { font-weight: 800; margin-bottom: 4px; }
+  .plot-photo { width: 320px; flex-shrink: 0; background: #000; display: flex; align-items: center; }
+  .plot-photo img { width: 100%; display: block; }
+  .photo-meta { font-size: 10px; color: var(--ink-soft); margin-top: 6px; }
+
+  .figure { border: 1px dashed var(--line); border-radius: 8px; padding: 22px; text-align: center; color: var(--ink-soft); font-size: 11.5px; background: #FBFAF5; margin: 8px 0 12px; }
+  .mapfig { margin: 8px 0 14px; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .mapfig img { width: 100%; display: block; }
+  .mapcap { font-size: 10.5px; color: var(--ink-soft); padding: 7px 11px; background: var(--stripe); }
+
+  /* BAL-meaning colour swatches */
+  .swatch { font-weight: 800; color: #fff; text-align: center; padding: 8px 6px; font-size: 11px; }
+  .bal-low { background: #EFE7C9; color: var(--ink); }
+  .bal-125 { background: #BFD9D6; color: var(--ink); }
+  .bal-19 { background: #1E8FD0; }
+  .bal-29 { background: #F2D024; color: var(--ink); }
+  .bal-40 { background: #F2A024; color: var(--ink); }
+  .bal-fz { background: #E2412B; }
+  @page { size: A4; margin: 14mm; }
+  /* Clean pagination for print / PDF: keep evidence cards, figures, the headline
+     and table rows from splitting across pages, and keep a heading with its
+     content. */
+  .plot, .mapfig, .figure, .headline, tr, .band { break-inside: avoid; page-break-inside: avoid; }
+  h2 { break-after: avoid; page-break-after: avoid; }
+  .band { break-after: avoid; page-break-after: avoid; }
+</style>
+</head>
+<body>
+<div class="doc">
+
+  <!-- ── Branded header ────────────────────────────────────────────────── -->
+  <div class="brandbar">
+    <div>
+      <div class="wordmark">Ember<span class="spark">Check</span></div>
+      <div class="tagline">Bushfire screening · NSW</div>
+    </div>
+    <div class="contact">
+      AS 3959-2018 · NSW PBP 2019<br />
+      Simplified Procedure (Method 1)<br />
+      {{report.job_number}} · v{{report.version}}
+    </div>
+  </div>
+
+  <h1>Bushfire Attack Level (BAL) Assessment Report</h1>
+
+  {{#if result.preliminary}}
+  <div class="badge">⚠ PRELIMINARY — SCREENING ONLY</div>
+  <ul class="bul tight">
+    <li>This reading is <strong>suggested by software</strong> from public datasets and any site photography supplied.</li>
+    <li>It is <strong>not a determination</strong> until an accredited BPAD assessor confirms and signs it.</li>
+    <li>Conservative by design: low-confidence inputs are resolved to the worst case and flagged — never a false-low.</li>
+  </ul>
+  {{/if}}
+
+  <!-- ── Site details ──────────────────────────────────────────────────── -->
+  <table class="band"><tr><th>Site details</th></tr></table>
+  <table class="kvtable">
+    <tr><td class="k">Address</td><td>{{property.full_address}}</td></tr>
+    <tr><td class="k">Suburb / LGA</td><td>{{property.lga}} &nbsp;·&nbsp; State: {{property.state}}</td></tr>
+    <tr><td class="k">Assessment mode</td><td>{{site.boundary_mode}}</td></tr>
+    <tr><td class="k">Standard</td><td>AS 3959-2018, Simplified Procedure (Method 1), read with NSW PBP 2019</td></tr>
+  </table>
+
+  <!-- ── Report details ────────────────────────────────────────────────── -->
+  <table class="band"><tr><th>Report details</th></tr></table>
+  <table class="kvtable">
+    <tr><td class="k">Project number</td><td>{{report.job_number}} &nbsp;·&nbsp; Report version: {{report.version}}</td></tr>
+    <tr><td class="k">Assessment date</td><td>{{report.assessment_date}} &nbsp;·&nbsp; Report generated: {{report.generated_date}}</td></tr>
+    <tr><td class="k">Status</td><td>{{report.status_label}}</td></tr>
+    <tr><td class="k">Assessor</td><td>{{assessor.name}} — {{assessor.jurisdiction_label}}{{#if assessor.accreditation_level}} ({{assessor.accreditation_level}}){{/if}} · BPAD {{assessor.accreditation_number}}</td></tr>
+    <tr><td class="k">Company</td><td>{{assessor.company}}</td></tr>
+  </table>
+
+  <!-- ── Headline determination ────────────────────────────────────────── -->
+  <div class="headline">
+    <div>
+      <div class="lbl">Suggested Bushfire Attack Level</div>
+      <div style="margin-top:7px"><span class="bal-chip">{{result.headline_bal}}</span></div>
+    </div>
+    <div>
+      {{#if result.certified}}
+        <div class="sign-line">Certified determination — signed under accreditation.</div>
+      {{else}}
+        <div class="sign-line">"Suggested — becomes a determination only when you sign."</div>
+      {{/if}}
+      {{#if result.uncertain_vegetation}}
+      <div class="conservative-note">Contains conservative worst-case (Forest) inputs — see flagged plots (⚑).</div>
+      {{/if}}
+    </div>
+  </div>
+
+  <h2>Site Assessment and Site Plan</h2>
+  <ul class="bul">
+    <li><span class="lead">Standard:</span> assessed under <em>AS 3959-2018 — Construction of Buildings in Bushfire Prone Areas</em>, Simplified Procedure (Method 1), read with NSW PBP 2019.</li>
+    <li><span class="lead">Vegetation:</span> all vegetation within 100 m of the asset is classified per clause 2.2.3.</li>
+    <li><span class="lead">Per-side method:</span> each direction is assessed independently; the worst-case side governs the final BAL (cl 2.2.6).</li>
+    <li><span class="lead">Site plan:</span> an overview of the subject site, boundary and 100 m buffer is shown in Figure 1.</li>
+  </ul>
+  {{#if site.has_map}}
+  <div class="mapfig">
+    <img src="{{{site.map_image}}}" alt="Aerial site overview with the subject boundary and 100 m assessment buffer" />
+    <div class="mapcap"><strong>Figure 1:</strong> Site overview — subject boundary (red), 100 m assessment buffer (cyan), governing distance (amber). Aerial imagery © Esri World Imagery. Coordinate reference: GDA2020 / MGA.</div>
+  </div>
+  {{else}}
+  <div class="figure">[ Figure 1 — Site overview, 100 m assessment buffer, plots & photo points ]<br /><span class="sub">Aerial site plan unavailable at generation (verified geometry required).</span></div>
+  {{/if}}
+
+  <h2>Vegetation Classification</h2>
+  <ul class="bul">
+    <li>Predominant vegetation in each direction within 100 m is classified per clause 2.2.3 of AS 3959-2018.</li>
+    <li>Each plot and its supporting site photograph are presented in <strong>Table 1</strong>.</li>
+    <li>Group A Forest is the worst case; it is applied wherever automated confidence is low.</li>
+    <li>Such sides are flagged <span class="flag-mark">⚑</span> for assessor inspection — never a false-low reading.</li>
+  </ul>
+
+  <!-- ── Table 1: Vegetation Classification (per-plot photo evidence) ───── -->
+  <table class="band"><tr><th>Table 1: Vegetation Classification</th></tr></table>
+  {{#if has_photos}}
+    {{#each photo_evidence}}
+    <div class="plot">
+      <div class="plot-head"><span>{{this.plot_label}}</span><span>{{this.veg_class}}</span></div>
+      <div class="plot-body">
+        <div class="plot-desc">
+          <div class="label">Site photo — {{this.plot_label}}</div>
+          <div>{{this.description}}</div>
+          <ul class="bul tight" style="margin-top:8px; font-size:11px">
+            <li><span class="lead">Effective slope:</span> {{this.slope_text}}.</li>
+            <li><span class="lead">AI read:</span> {{this.ai_class}} ({{this.confidence}} confidence).</li>
+            <li><span class="lead">Captured:</span> {{this.captured}}.</li>
+          </ul>
+        </div>
+        <div class="plot-photo"><img src="{{{this.photo}}}" alt="{{this.plot_label}} site photo" /></div>
+      </div>
+    </div>
+    {{/each}}
+  {{else}}
+    <p class="sub">No owner site photographs were supplied for this assessment. Vegetation was classified from the public NSW SVTM vegetation map; any low-confidence side was resolved to worst-case Forest and flagged for assessor inspection.</p>
+  {{/if}}
+
+  <!-- Per-side vegetation classification summary -->
+  <table class="grid">
+    <thead><tr><th>Side</th><th>Transect</th><th>Classification</th><th>Basis</th><th>Confidence</th></tr></thead>
+    <tbody>
+    {{#each transects}}
+      <tr>
+        <td>{{this.compass_side}}</td>
+        <td class="mono">{{this.label}}</td>
+        <td>{{this.vegetation_class}}{{#if this.uncertain_vegetation}} <span class="flag-mark">⚑</span>{{/if}}</td>
+        <td>{{this.classification_basis}}</td>
+        <td>{{this.confidence}}</td>
+      </tr>
+    {{/each}}
+    </tbody>
+  </table>
+  <p class="sub">⚑ = automated verification not confident; worst-case Forest applied and flagged for assessor inspection (uncertain_vegetation = true).</p>
+
+  <!-- ── Table 2: Fire Danger Index ────────────────────────────────────── -->
+  <h2>Relevant Fire Danger Index</h2>
+  <ul class="bul">
+    <li>Determined in accordance with Table 2.1 of AS 3959-2018.</li>
+    <li>Taken from the static NSW LGA-to-FDI reference dataset — not inferred.</li>
+    <li>The applicable FDI band is marked ✓ in Table 2 below.</li>
+  </ul>
+  <table class="band"><tr><th>Table 2: Fire Danger Index (FDI)</th></tr></table>
+  <table class="grid">
+    <thead><tr><th>FDI 40 {{site.is_40}}</th><th>FDI 50 {{site.is_50}}</th><th>FDI 80 {{site.is_80}}</th><th>FDI 100 {{site.is_100}}</th></tr></thead>
+    <tbody><tr><td>Table 2.4.5</td><td>Table 2.4.4</td><td>Table 2.4.3</td><td>Table 2.4.2</td></tr></tbody>
+  </table>
+  <table class="kvtable">
+    <tr><td class="k">LGA</td><td>{{site.lga}}</td></tr>
+    <tr><td class="k">Applicable FDI</td><td>FDI {{site.fdi}}</td></tr>
+    <tr><td class="k">Source</td><td>{{site.fdi_source}} (fdi_nsw.json)</td></tr>
+  </table>
+
+  <!-- ── Table 3: BAL per side ─────────────────────────────────────────── -->
+  <h2>Potential Bushfire Impacts &amp; BAL per side</h2>
+  <ul class="bul">
+    <li>BAL is calculated for each classified plot at <strong>FDI {{site.fdi}}</strong>, per the AS 3959-2018 tables.</li>
+    <li>Inputs per side: vegetation class, effective slope and separation distance to the asset.</li>
+    <li>Each direction is assessed independently; the highest applicable side governs (cl 2.2.6).</li>
+  </ul>
+  <table class="band"><tr><th>Table 3: Method 1 BAL Calculation (per side)</th></tr></table>
+  <table class="grid">
+    <thead><tr><th>Side</th><th>Vegetation</th><th>Effective slope</th><th>Separation (m)</th><th>BAL</th></tr></thead>
+    <tbody>
+    {{#each transects}}
+      <tr>
+        <td>{{this.compass_side}}</td>
+        <td>{{this.vegetation_class}}</td>
+        <td>{{this.slope_band}} {{this.slope_direction}}</td>
+        <td class="mono">{{this.distance_m}}</td>
+        <td class="bal">{{this.bal}}{{#if this.uncertain_vegetation}} <span class="flag-mark">⚑</span>{{/if}}</td>
+      </tr>
+    {{/each}}
+    </tbody>
+  </table>
+
+  <!-- Per-side evidence with the honesty treatment intact -->
+  {{#each transects}}
+    {{#if this.flagged}}
+    <div class="plot">
+      <div class="plot-head"><span>{{this.compass_side}} side — {{this.label}}</span><span>{{this.vegetation_class}} · {{this.bal}}</span></div>
+      <div class="plot-desc">
+        {{#if this.uncertain_vegetation}}
+        <div><span class="flag-mark">⚑</span> AI: Unknown → forced to Forest (conservative). Worst-case class applied; flagged for assessor inspection.</div>
+        {{/if}}
+        {{#if this.flag_reason}}
+        <div><span class="flag-mark">⚑</span> {{this.flag_reason}}</div>
+        {{/if}}
+      </div>
+    </div>
+    {{/if}}
+  {{/each}}
+
+  <!-- ── Table 4: BAL Assessment Summary ───────────────────────────────── -->
+  <h2>Determined Bushfire Attack Level (BAL)</h2>
+  <ul class="bul">
+    <li><span class="lead">Overall BAL:</span> <strong>{{result.headline_bal}}</strong> for the subject site.</li>
+    <li><span class="lead">Governing side:</span> {{result.governing_side}} (cl 2.2.6 of AS 3959-2018).</li>
+    <li><span class="lead">Breakdown:</span> the per-side / per-lot ratings and the construction sections to consult are shown in Table 4.</li>
+  </ul>
+  <table class="band"><tr><th>Table 4: BAL Assessment Summary</th></tr></table>
+  <table class="grid">
+    <thead><tr><th>Affected side / lot</th><th>BAL Rating</th><th>Construction sections (AS 3959-2018)</th></tr></thead>
+    <tbody>
+    {{#each bal_summary}}
+      <tr><td>{{this.lot}}</td><td class="bal">{{this.bal}}</td><td>{{this.sections}}</td></tr>
+    {{/each}}
+    </tbody>
+  </table>
+  <p class="note">Note: this BAL is based on information current at the report date and is valid for 12 months from the date of signing.</p>
+
+  <p class="note">How to read the "Construction sections" column:</p>
+  <ul class="bul">
+    <li>Each value lists the AS 3959-2018 sections whose construction requirements apply at that BAL rating.</li>
+    <li><span class="lead">Section 3</span> sets the general requirements common to every rating above BAL-LOW.</li>
+    <li>The remaining sections give the rating-specific requirements — windows, doors, walls, roofs, decks, etc.</li>
+    <li>Each affected lot must be built to the sections shown for its BAL. The sections are defined in Table 5.</li>
+  </ul>
+  <table class="band"><tr><th>Table 5: AS 3959-2018 construction sections</th></tr></table>
+  <table class="grid">
+    <thead><tr><th>Section</th><th>Applies to</th><th>What it covers</th></tr></thead>
+    <tbody>
+      <tr><td>Section 3</td><td>All ratings above BAL-LOW</td><td>General construction requirements common to BAL-12.5 through BAL-FZ.</td></tr>
+      <tr><td>Section 4</td><td>BAL-LOW</td><td>No specific construction requirements — insufficient risk.</td></tr>
+      <tr><td>Section 5</td><td>BAL-12.5</td><td>Construction requirements for protection against ember attack.</td></tr>
+      <tr><td>Section 6</td><td>BAL-19</td><td>Construction requirements for ember attack and burning debris with increasing radiant heat.</td></tr>
+      <tr><td>Section 7</td><td>BAL-29</td><td>Construction requirements for increasing ember attack, burning debris and radiant heat.</td></tr>
+      <tr><td>Section 8</td><td>BAL-40</td><td>Construction requirements as above, plus increased likelihood of flame exposure.</td></tr>
+      <tr><td>Section 9</td><td>BAL-FZ</td><td>Construction requirements for direct flame contact from the fire front (Flame Zone).</td></tr>
+    </tbody>
+  </table>
+  <p class="sub">Refer to the current edition of AS 3959-2018 for the full construction provisions of each section. The reading "3 and 6", for example, means Section 3 (general) together with Section 6 (BAL-19).</p>
+
+  <!-- ── Provenance (value_sources) ────────────────────────────────────── -->
+  <h2>Governing input provenance (value_sources)</h2>
+  <p class="sub">Every governing input and where it came from, for assessor audit.</p>
+  <table class="grid">
+    <thead><tr><th>Input</th><th>Value</th><th>Source</th><th>Confidence</th></tr></thead>
+    <tbody>
+    {{#each result.value_sources}}
+      <tr><td>{{this.field}}</td><td>{{this.value}}</td><td>{{this.source}}</td><td>{{this.confidence}}</td></tr>
+    {{/each}}
+    </tbody>
+  </table>
+
+  <!-- ── BAL meaning reference ─────────────────────────────────────────── -->
+  <h2>What each BAL means</h2>
+  <table class="grid">
+    <thead><tr><th>BAL</th><th>Radiant heat flux</th><th>Predicted bush fire attack</th><th>Construction section</th></tr></thead>
+    <tbody>
+      <tr><td class="swatch bal-low">BAL-LOW</td><td>—</td><td>Insufficient risk to warrant specific construction requirements</td><td>4</td></tr>
+      <tr><td class="swatch bal-125">BAL-12.5</td><td>≤12.5 kW/m²</td><td>Ember attack</td><td>3 and 5</td></tr>
+      <tr><td class="swatch bal-19">BAL-19</td><td>&gt;12.5–19 kW/m²</td><td>Increasing ember attack and burning debris with increasing radiant heat</td><td>3 and 6</td></tr>
+      <tr><td class="swatch bal-29">BAL-29</td><td>&gt;19–29 kW/m²</td><td>Increasing ember attack, burning debris and radiant heat</td><td>3 and 7</td></tr>
+      <tr><td class="swatch bal-40">BAL-40</td><td>&gt;29–40 kW/m²</td><td>As above, with increased likelihood of flame exposure</td><td>3 and 8</td></tr>
+      <tr><td class="swatch bal-fz">BAL-FZ</td><td>&gt;40 kW/m²</td><td>Direct flame exposure from the fire front, plus radiant heat and embers</td><td>3 and 9</td></tr>
+    </tbody>
+  </table>
+  <p class="sub">Source: AS 3959-2018, Construction of buildings in bushfire-prone areas, Standards Australia.</p>
+
+  <!-- ── Assessor review & certification ───────────────────────────────── -->
+  <h2>Assessor review &amp; certification</h2>
+  {{#if result.certified}}
+    <table class="kvtable">
+      <tr><td class="k">Accredited practitioner</td><td>{{assessor.name}}</td></tr>
+      <tr><td class="k">BPAD accreditation no.</td><td>{{assessor.accreditation_number}}</td></tr>
+      <tr><td class="k">Jurisdiction</td><td>{{assessor.jurisdiction}}</td></tr>
+      <tr><td class="k">Date signed</td><td>{{report.signed_date}}</td></tr>
+      <tr><td class="k">Report number</td><td class="mono">{{report.report_number}}</td></tr>
+    </table>
+  {{else}}
+    <ul class="bul">
+      <li><strong>Not valid until signed.</strong> Everything above is software output.</li>
+      <li>On signing, the accredited practitioner ({{assessor.name}}, {{assessor.jurisdiction_label}}) adopts this assessment as their professional determination.</li>
+      <li>Signing freezes the determination and issues the certified PDF.</li>
+    </ul>
+    <p class="sign-line">"Suggested — becomes a determination only when you sign."</p>
+  {{/if}}
+
+  <h2>Limitations &amp; disclaimer</h2>
+  <ul class="bul">
+    <li>This is an indicative AS 3959-2018 <strong>Method 1</strong> screening result; Method 2 (detailed) is out of scope.</li>
+    <li>It is <strong>not a substitute</strong> for a full site assessment by a qualified bushfire consultant.</li>
+    <li>Automated readings come from public datasets current at the generation date; on-ground conditions may differ.</li>
+    <li>Where automated confidence was low, the worst-case (Forest) class was applied; the signed BAL may be lower after inspection.</li>
+    <li>Reliance should not extend beyond <strong>12 months</strong> from the date of signing.</li>
+  </ul>
+
+  <div class="footer">
+    <span><b>EmberCheck</b> — the system proposes; the accredited assessor determines.</span>
+    <span>{{report.job_number}}</span>
+  </div>
+
+</div>
+</body>
+</html>

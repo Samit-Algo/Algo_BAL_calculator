@@ -1,7 +1,7 @@
 # EmberCheck — Master Specification
 
 **Project:** NSW bushfire BAL (Bushfire Attack Level) screening tool
-**Version:** 3.0 (2026-06-26)
+**Version:** 4.0 (2026-06-28)
 **This document is the single source of truth and describes what the code actually does.**
 If the spec and the code disagree, the **code wins** — update this document to match.
 
@@ -9,12 +9,47 @@ If the spec and the code disagree, the **code wins** — update this document to
 > a rating that sits *below* the real risk. Every default, fallback, photo
 > combination, and override-reconciliation rule errs on the conservative (higher
 > BAL) side. The tool's job is to **propose, never determine**: it surfaces an
-> indicative read; only an accredited assessor (the future Console) certifies it,
+> indicative read; only an accredited assessor (via the Console) certifies it,
 > and only the assessor may *lower* a rating and sign it.
 
 ---
 
 ## Changelog
+
+**4.0 (2026-06-28) — Sign-off & issued PDF, admin dashboard, the consumer
+respond loop, and Cloudflare Pages hosting.** The P0 hand-off chain now closes
+end-to-end: an assessor can sign and the consumer gets a certified PDF back.
+- **Sign-off → issued determination (P0).** `POST /console/cases/{id}/sign`
+  freezes the per-side determination onto an embedded **`Signoff`** record, renders
+  an A4 PDF certificate (`app/services/report_pdf.py`, ReportLab — pure Python, no
+  native deps; `reportlab==4.2.5`), marks the case **`COMPLETE`**, and writes an
+  immutable `sign` audit event. A signed case is **locked** — every assessor write
+  (confirm/override/revert/status) then returns `409`. §3a, §7, §14.
+- **The consumer gets the certificate.** `GET /cases/{id}/report` streams the
+  caller's signed PDF (ownership-checked; unsigned → `404`). The dashboard surfaces
+  a **"Signed determination" + "Download report"** state on the case card. §7, §13.
+- **The full review lifecycle is wired.** Beyond submit, the assessor moves a case
+  through `UNDER_REVIEW / NEEDS_MORE_PHOTOS / SITE_VISIT_REQUIRED /
+  REFERRED_SPECIALIST / READY_TO_SIGN` (`PUT /console/cases/{id}/status`, reasoned
+  + completion-gated), confirms/overrides each side
+  (`PUT/DELETE …/sectors/{side}/{confirm,override}`, console surface = lower-with-
+  flag), and signs. §3a, §7.
+- **The consumer respond-to-assessor loop is closed.** When an assessor asks for
+  more photos, the consumer's resumed property shows an **`AssessorRequestCard`**
+  (reason + requested sides) with an "Add the requested photos" action that opens
+  the per-side capture; uploading a photo to a requested side **auto-returns** the
+  case to `UNDER_REVIEW` (server-side, audited `auto_resume`) and the card confirms
+  it. §7, §13.
+- **Admin Overview dashboard.** A new `GET /admin/overview` aggregates platform
+  KPIs, a daily timeline, BAL + status distributions, mapped property points, and a
+  recent-activity feed; the admin app gains an **Overview** tab (Recharts +
+  react-leaflet) alongside the application queue. §7, §13.
+- **Choose-assessor is now terminal.** Once a case is submitted/assigned/signed the
+  consumer's hand-off card shows a read-only "Submitted / Certified" state — the
+  choose flow can never be re-offered (incl. after reopening). §13.
+- **Hosting.** All three frontends deploy as static builds to **Cloudflare Pages**
+  (`wrangler pages deploy dist`); the backend URL is baked in at build time via
+  `VITE_API_BASE_URL`, and CORS allows `*.pages.dev` + the production domains. §2, §15.
 
 **3.0 (2026-06-26) — Assessor lifecycle, admin approval & assignment.**
 - **Three roles** (`User.role`): `consumer` (default), `assessor`, `admin`. §2, §2a.
@@ -138,10 +173,11 @@ screening only — not certified.**
 
 | Layer | Stack | Notes |
 |---|---|---|
-| Backend | FastAPI (Python), `httpx`, `shapely`, `pyproj` | Stateless. Calls live NSW government APIs + reads static JSON reference files. |
+| Backend | FastAPI (Python), `httpx`, `shapely`, `pyproj`, `reportlab` | Stateless assessment; calls live NSW government APIs + reads static JSON reference files. `reportlab` renders the signed PDF determination (§7 sign-off). |
 | Vision | Groq VLM (OpenAI-compatible chat/vision API) | Server-side only; the key never reaches the browser. |
-| Frontend | React + Vite — **three apps** | `embercheck-frontend/` (consumer), `embercheck-console/` (assessor), `embercheck-admin/` (admin). Each has its own dev server + a trimmed copy of the auth layer (a shared package is a Phase-9 cleanup). |
-| Persistence | MongoDB via Beanie ODM (PyMongo async client); local files for photo/document storage + logs | `fastapi-users` (email/password + Google OAuth) is wired. |
+| Frontend | React + Vite — **three apps** | `embercheck-frontend/` (consumer), `embercheck-console/` (assessor), `embercheck-admin/` (admin — application queue **+ an Overview analytics dashboard**, Recharts + react-leaflet). Each has its own dev server + a trimmed copy of the auth layer (a shared package is a Phase-9 cleanup). |
+| Persistence | MongoDB via Beanie ODM (PyMongo async client); local files for photo/document/**report PDF** storage + logs | `fastapi-users` (email/password + Google OAuth) is wired. |
+| Hosting | Cloudflare Pages (static builds) for all three apps; the backend runs separately behind HTTPS | Each app is built with `VITE_API_BASE_URL` baked in and `wrangler pages deploy dist`-ed to its own project; backend CORS allows `*.pages.dev` + the production domains (§15). |
 
 **The map (SVTM) is a draft prior, not the verdict.** A core architectural shift:
 SVTM vegetation polygons used to be the *sole authority* for vegetation
@@ -321,12 +357,27 @@ Case (Beanie Document, collection "cases")
 ├── sector_evidence: list[SectorEvidence] | None   # per compass side; None until boundary
 ├── photos: list[CasePhoto]             # point-mode capture photos
 ├── status: CaseStatus                  # indexed
+├── review_reason: str | None           # latest assessor request (consumer-visible)
+├── photo_request_sides: list[str]      # sides the assessor asked to re-photograph
+├── assigned_assessor_id: ObjectId|None # the chosen assessor (set on submit); assigned_at
+├── signoff: Signoff | None             # frozen determination once signed (status COMPLETE)
 └── created_at / updated_at / submitted_at
 ```
 
 `CaseStatus`: `DRAFT → ANALYSIS_COMPLETE → SUBMITTED_TO_ASSESSOR → UNDER_REVIEW
-→ CHANGES_REQUESTED → SITE_VISIT_REQUIRED → REFERRED_SPECIALIST → APPROVED →
-COMPLETE` (only the first three transitions are wired today).
+→ NEEDS_MORE_PHOTOS / SITE_VISIT_REQUIRED / REFERRED_SPECIALIST → READY_TO_SIGN →
+COMPLETE` — **the whole lifecycle is now wired** (consumer submit/assign → assessor
+review states → ready-to-sign → sign → COMPLETE). `NEEDS_MORE_PHOTOS` supersedes the
+legacy `CHANGES_REQUESTED`; `READY_TO_SIGN` supersedes the legacy `APPROVED` (both old
+values still read for back-compat).
+
+`Signoff` (embedded, set by the sign endpoint — the **frozen** determination so the
+issued certificate can never drift if the live case is later edited): `report_number`
+(`EC-<caseid8>-<YYYYMMDD>-<seq>`), `signed_by_assessor_id`, `assessor_name`,
+`accreditation_number/level`, `jurisdiction`, `signed_at`, the frozen `bal_rating` /
+`governing_direction` / `determination[]` rows, the `attestation` text, and
+`report_path` (relative path to the rendered PDF on disk). A `COMPLETE` case is locked
+— every assessor write returns `409`.
 
 ### Per-side evidence (`SectorEvidence`, keyed by compass side)
 
@@ -490,7 +541,7 @@ headline. **None of it may change without review.**
 So on the consumer surface a vegetation change can only **RAISE or FLAG** — a
 *lowering* vegetation change leaves the conservative GIS/photo value as the
 official indicative BAL and records a review flag. **Only the accredited assessor
-(the future Console) actually lowers and signs.**
+(in the Console) actually lowers and signs.**
 
 > **Design-vs-build note.** The redesign docs describe a *lowering* change being
 > shown as a **PROVISIONAL** "pending accredited review" value. The current build
@@ -647,7 +698,9 @@ surface as the same `404/400/503` as `/assess`.
 `CaseRead` shape: `{ id, status, property, assessment, boundary_assessment,
 bal_rating, governing_direction, governing_vegetation, photos, sector_evidence,
 review_reason, photo_request_sides, created_at, updated_at, submitted_at,
-assigned_assessor_id }`.
+assigned_assessor_id, signed, signoff }`. `signed` is the cheap boolean the
+dashboard gates the report download on; `signoff` is the small issued-determination
+summary (report number, assessor, signed date) once `COMPLETE`.
 
 #### `PUT /cases/{case_id}/boundary`
 Requires auth (ownership 404). (Re)assess from a drawn boundary and store it on
@@ -691,7 +744,13 @@ Requires auth (ownership 404). Upload one or more photos for a compass side
 `image/png`, ≤ 10 MB each; writes them under `PHOTO_STORAGE_DIR/<id>/<side>/`,
 appends `SectorPhoto`s, sets the side `analysis_status: "pending"`, schedules the
 background VLM+reconcile task, and **returns immediately**:
-`→ { compass_side, photos[], analysis_status: "pending" }`.
+`→ { compass_side, photos[], analysis_status: "pending", review_resumed, status,
+message }`. **Auto-resume (the consumer respond loop):** if the case was in
+`NEEDS_MORE_PHOTOS` (or legacy `CHANGES_REQUESTED`) and the upload is for a requested
+side (or any side when none were named), the case is automatically returned to
+`UNDER_REVIEW`, the open request is cleared, and a `auto_resume` audit event is
+written — `review_resumed: true` + a `message` tell the consumer their assessor was
+notified.
 
 #### `GET /cases/{case_id}/sectors/{compass_side}/photos/{photo_ref}`
 Requires auth (ownership 404). Streams a stored sector photo by **stable
@@ -743,6 +802,13 @@ same filter (`APPROVED` + accepting + in-state, else `400`) and stored as
 submitted (re-supplying `assessor_id` re-assigns); a case already in the assessor's
 review lifecycle → `409`.
 
+#### `GET /cases/{case_id}/report`
+Requires auth (ownership 404). Streams the **signed PDF determination** for the
+caller's own case once an assessor has signed it (`application/pdf`, filename
+`<report_number>.pdf`). An unsigned case (no `signoff`) → `404`; path-traversal
+guarded (the bytes live on disk at `signoff.report_path`). The dashboard only shows
+the download once `CaseRead.signed` is true.
+
 ### Assessor registration (Phase 2)
 
 A logged-in **consumer** applies to become an assessor. Applying grants **no**
@@ -782,18 +848,53 @@ if none (the consumer app uses this to show the form vs. the pending state).
   (status + `role=consumer`). reject/suspend require a `reason` (`422` without).
 - `POST /admin/applications/{id}/request-info` — stays `PENDING`, records the
   reason; reason required.
+- `GET /admin/overview?days=N` — the **Overview dashboard** payload (one round-trip,
+  computed via Mongo aggregation): `kpis` (total/signed/in-review cases, users,
+  active assessors, pending applications), `cases_by_status` (bar), `bal_distribution`
+  (pie), a zero-filled daily `timeline` (cases / sign-offs / sign-ups), `map_points`
+  (assessed properties with coordinates, capped), `assessor_status` + `assessor_states`,
+  and a `recent_activity` feed (last admin actions). `days` sizes the timeline window.
 
-Every action writes an immutable `AdminAuditEvent` (§2a).
+Every application action writes an immutable `AdminAuditEvent` (§2a).
 
 ### Console (assessor) — `/console/*`, gated by `current_assessor` (§2a)
 
 The assessor reviews **only cases assigned to them** (worklist + single-case read
 are assignment-scoped, with a dual-read so legacy unassigned submitted cases still
-surface; out-of-scope → `404`, never `403`). Routes: `GET /console/me`,
-`/console/worklist`, `/console/cases/{id}` (+ its sector photo stream), and the
-write path `PUT …/sectors/{side}/confirm`, `PUT/DELETE …/sectors/{side}/override`,
-`PUT /console/cases/{id}/status` — every assessor action appends a `CaseAuditEvent`.
-The console surface may **lower-with-flag** (`reconcile_*(surface="console")`).
+surface; out-of-scope → `404`, never `403`). Every assessor action appends an
+immutable `CaseAuditEvent`. The console surface may **lower-with-flag**
+(`reconcile_*(surface="console")`) — unlike the consumer surface (§5a).
+
+- `GET /console/me` — assessor identity (gate check for the Console app).
+- `GET /console/worklist` — the assessor's assigned cases, grouped by review state
+  (a derived `ui_state` per row, with SLA due dates).
+- `GET /console/cases/{id}` — one full case: all four sides (N/E/S/W placeholders
+  for a point-only case), the per-side evidence layers, the merged **audit trail**,
+  geometry/transects for the map, a `review_progress` + sign-off blocker summary,
+  and the `signoff` descriptor once signed.
+- `GET /console/cases/{id}/sectors/{side}/photos/{photo_id}` — stream a sector
+  photo (jurisdiction-scoped; the consumer photo route is owner-locked).
+- `PUT /console/cases/{id}/sectors/{side}/confirm` — attest a side as reviewed.
+- `PUT /console/cases/{id}/sectors/{side}/override` — per-side override
+  (vegetation / distance / slope / a per-side **FDI** exception); a `reason` is
+  mandatory. **lower-with-flag** allowed. Recomputes `final_bal` + headline.
+- `DELETE /console/cases/{id}/sectors/{side}/override` — revert the side to the
+  calculated value (audited `revert`).
+- `PUT /console/cases/{id}/status` — move through the review lifecycle
+  (`UNDER_REVIEW / NEEDS_MORE_PHOTOS / SITE_VISIT_REQUIRED / REFERRED_SPECIALIST /
+  READY_TO_SIGN`). Request states require a `reason`; `NEEDS_MORE_PHOTOS` may name
+  `photo_request_sides`; `READY_TO_SIGN` is gated by the completion rule (every side
+  reviewed, no open blockers).
+- `POST /console/cases/{id}/sign` — **sign & issue (P0).** Body `{ attestation: true }`
+  (else `422`). Re-checks the completion rule, **freezes** the determination onto an
+  embedded `Signoff`, renders the PDF (`report_pdf.py` → on disk), sets status
+  `COMPLETE`, and writes a `sign` audit event. `400` if not Ready-to-sign, `409` if
+  already signed. The case is then **locked** (other writes → `409`).
+- `GET /console/cases/{id}/report` — stream the issued PDF for the assessor.
+
+Beyond the assessor's own actions, two **system** audit events appear in the trail:
+`auto_status` (automatic advances) and `auto_resume` (the consumer supplied requested
+evidence and the case returned to `UNDER_REVIEW` — see `/cases/{id}/sectors/{side}/photos`).
 
 ### `GET /suggest?q=<text>`
 Address autocomplete. `< 3` chars or any upstream error → `[]` (never errors).
@@ -982,14 +1083,33 @@ rebuild the draw layer (this avoids the "rebuild storm").
 - A **themed confirm modal** (`ui/ConfirmModal`) replaces the native `confirm()`
   for destructive actions (per-side reset, "Reset to default", delete property).
 - **My Properties / Dashboard** lists saved cases and supports **delete
-  property** (→ `DELETE /cases/{id}`).
+  property** (→ `DELETE /cases/{id}`). A signed case shows a **"Signed
+  determination"** badge + **"Download report"** (→ `GET /cases/{id}/report`).
 - The main property page's **boundary card** shows the essentials + a **"View"**
-  button. **"Go to accredited assessor"** (`AssessorHandoffCard.jsx`) is now wired
+  button. **"Go to accredited assessor"** (`AssessorHandoffCard.jsx`) is wired
   (§2a): it fetches the approved in-state assessors (`GET /cases/{id}/assessors`),
   shows a **choose-an-assessor** list (each with a *demo* ★ rating placeholder),
-  and on choose submits + assigns the case (`POST /cases/{id}/submit`). A
-  **"Become an accredited assessor"** entry in the user menu opens the registration
+  and on choose submits + assigns the case (`POST /cases/{id}/submit`). Once the
+  case is submitted/assigned/signed the card flips to a **read-only terminal state**
+  ("Submitted for accredited assessment" / "Certified") — the choose flow is never
+  re-offered, including after closing and reopening the property.
+- **Respond to your assessor** (`AssessorRequestCard.jsx`). When a resumed case is
+  in `NEEDS_MORE_PHOTOS` / `CHANGES_REQUESTED` (or `SITE_VISIT_REQUIRED` /
+  `REFERRED_SPECIALIST`), a banner at the top of the property view shows the
+  assessor's reason + requested sides and an **"Add the requested photos"** action
+  that opens the boundary per-side capture. Adding a photo auto-returns the case to
+  review (§7); the banner then confirms "Sent back to your assessor."
+- A **"Become an accredited assessor"** entry in the user menu opens the registration
   form / pending-status screen (`AssessorRegistration.jsx`).
+- **Assessor Console UX** (`embercheck-console/`): a worklist grouped by review
+  state, a per-case workspace (per-side evidence, confirm/override, photo review),
+  an audit trail, and a **Report / sign-off** screen (`ReportSignoff.jsx`) that
+  attests + signs and then shows the issued state with a PDF download.
+- **Admin Overview dashboard** (`embercheck-admin/`, `OverviewScreen.jsx`): KPI
+  cards, an activity **timeline** (area chart), a **BAL pie**, a **status bar**, a
+  **Leaflet map** of assessed properties coloured by BAL, assessor breakdowns, and a
+  recent-activity feed — all from `GET /admin/overview`. Sits alongside the existing
+  **Applications** queue as a second tab.
 
 ---
 
@@ -1001,15 +1121,19 @@ Not a contract — the current product direction the safety rules serve.
   centre-point read systematically *under-reads* versus the real property edges,
   so it must **never** be presented as a safe verdict. ("Screening only — not a
   certified assessment" copy is shown on the entry hero.)
-- **Paid / login = boundary + per-side photos + report.** Drawing a boundary,
-  attaching photos, and saving a case require login. **Payment is not built yet**
-  — these are gated on login for now.
-- **Even the paid output stays indicative.** Boundary + photos sharpen the read
-  but the result is still "indicative, screening only — not certified." Only an
-  accredited assessor (via the Console) certifies and signs.
-- **The hand-off chain now exists**: consumer picks an approved assessor → the
-  case is assigned and submitted → that assessor reviews it in the Console. The
-  remaining gap is **sign-off + PDF report + payment** (§15).
+- **Paid / login = boundary + per-side photos + certified report.** Drawing a
+  boundary, attaching photos, saving a case, and the assessor hand-off + signed PDF
+  all work behind login. **Payment is not built yet** — these are gated on login,
+  not a paywall, for now.
+- **Even the paid output stays indicative until signed.** Boundary + photos sharpen
+  the read but it's "indicative, screening only — not certified." Only an accredited
+  assessor (via the Console) certifies and **signs**; the signed PDF is the certified
+  artifact.
+- **The hand-off chain is now end-to-end**: consumer picks an approved assessor →
+  the case is assigned and submitted → the assessor reviews, can request more photos
+  (consumer responds, case auto-resumes), marks ready-to-sign, **signs** → a PDF
+  determination is issued and the consumer **downloads** it. The remaining commercial
+  gap is **payment** (and operational **notifications**) — see §15.
 
 ---
 
@@ -1030,11 +1154,13 @@ Not a contract — the current product direction the safety rules serve.
 - **NSW only** — all data sources are NSW government services.
 - **Slope is screening-grade** (house-to-vegetation), not a full AS 3959 effective
   slope; the per-side manual override is provided for correction.
-- **Consumer accounts + assessor lifecycle are in place.** Persistence, auth
-  (email/password + Google OAuth), the case lifecycle, the dashboard, **assessor
-  registration → admin approval → the live access gate → choose-assessor →
-  assignment → Console review** all work end-to-end. `/assess` stays public.
-  The remaining lifecycle gap is **sign-off + PDF + delivery** (parked below).
+- **The full lifecycle is in place.** Persistence, auth (email/password + Google
+  OAuth), the case lifecycle, the dashboard, **assessor registration → admin
+  approval → the live access gate → choose-assessor → assignment → Console review →
+  request-more-photos / consumer respond → ready-to-sign → sign → issued PDF →
+  consumer download** all work end-to-end, plus the admin Overview dashboard.
+  `/assess` stays public. The remaining gaps are **payment** and **notifications**
+  (parked below).
 
 ### Parked / known issues (list, don't fix)
 
@@ -1047,10 +1173,11 @@ Not a contract — the current product direction the safety rules serve.
   worst band.
 - **"One sharpening rating" UX** — the intended end state is a single evolving
   number (address → boundary → photos), not separate screens.
-- **Sign-off + PDF report + email delivery** — the Console reviews and overrides,
-  but the final **sign endpoint**, the `COMPLETE` status, the generated report PDF,
-  and emailing it to the consumer are **not built**. (`ReportSignoff.jsx` exists as
-  a screen but isn't wired to a live sign endpoint.)
+- **Email/SMS delivery + notifications** — sign-off, the `COMPLETE` status, the
+  generated PDF, and the consumer download are now **built** (§7, §13). What's still
+  missing is **delivery/notifications**: nothing emails the issued PDF or notifies
+  anyone of state changes (assigned / more-photos-requested / signed). The PDF is
+  download-only today.
 - **Assessor proximity / geocoding** — `AssessorProfile.base_location` (GeoJSON) and
   `service_radius_km` exist but are **not populated or indexed**: search is
   deliberately **state-level only** (no `base_address` geocoding, no 2dsphere
@@ -1066,8 +1193,18 @@ Not a contract — the current product direction the safety rules serve.
   path is `scripts/set_admin.py`.
 - **Third auth copy** — consumer, console and admin each carry a trimmed copy of the
   auth layer; extract a shared package (Phase 9).
-- **Object storage + Atlas** — KYC/insurance docs and photos are on local disk;
-  MongoDB is local. Move docs to object storage + migrate to Atlas before real use.
+- **Object storage + Atlas** — KYC/insurance docs, photos, and the issued report
+  PDFs are on local disk; MongoDB is local. Move files to object storage + migrate to
+  Atlas before real use. (The report PDF is also only reachable while the backend's
+  disk persists.)
+- **Hosting / deploy config** — the three frontends are static **Cloudflare Pages**
+  builds. `VITE_API_BASE_URL` (and `VITE_GOOGLE_CLIENT_ID`) are baked in **at build
+  time** from each app's `.env.production`, so a dashboard-set env var does **not**
+  apply to a local `wrangler pages deploy` of a prebuilt `dist/`. Backend CORS
+  (`app/main.py`) must list every production origin: it allows `*.pages.dev` + the
+  configured custom domains — a new custom domain needs adding there. A project whose
+  **production branch** doesn't match the deploy branch lands deploys as *Preview*
+  (served at `<branch>.<project>.pages.dev`, not the bare project URL).
 
 ---
 

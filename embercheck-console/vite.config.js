@@ -13,6 +13,7 @@ export default defineConfig({
     port: 5174, // distinct from the consumer app's 5173
     proxy: {
       '/console': BACKEND,
+      '/assessor': BACKEND,
       '/auth': BACKEND,
       '/users': BACKEND,
       '/health': BACKEND,

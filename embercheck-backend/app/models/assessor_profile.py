@@ -103,6 +103,25 @@ class AssessorProfile(Document):
     # Supporting documents (relative file_path refs only - see AssessorDocument).
     documents: list[AssessorDocument] = Field(default_factory=list)
 
+    # The CURRENT profile photo's relative path under PHOTO_STORAGE_DIR. Set when a
+    # profile_photo document is uploaded so "the current avatar" is unambiguous
+    # (rather than scanning documents for the newest profile_photo). Same on-disk
+    # ref convention as AssessorDocument.file_path; the raw path is NEVER exposed
+    # by any read schema - it is served only via GET /assessor/me/photo.
+    profile_photo_path: str | None = None
+
+    # Profile banner customization (None = the app's default gradient).
+    #   banner_type == "color"    -> banner_value is a hex string (#rgb / #rrggbb)
+    #   banner_type == "gradient" -> banner_value is a preset id (validated against
+    #                                a fixed server-side set; the client maps the id
+    #                                to CSS, so no raw CSS is ever stored)
+    #   banner_type == "image"    -> the image lives at banner_image_path
+    # banner_image_path is a relative ref like profile_photo_path; the raw path is
+    # NEVER exposed by a read schema - it is served only via GET /assessor/me/banner.
+    banner_type: str | None = None
+    banner_value: str | None = None
+    banner_image_path: str | None = None
+
     # Reason captured on reject/suspend/needs-info; surfaced by the admin queue
     # in a later phase.
     review_reason: str | None = None

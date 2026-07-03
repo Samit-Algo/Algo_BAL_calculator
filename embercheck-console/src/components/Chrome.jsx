@@ -14,7 +14,7 @@ function initials(name, email) {
   return letters.toUpperCase()
 }
 
-export function Chrome({ me, breadcrumb, onHome, onSignOut, children, fill = false }) {
+export function Chrome({ me, breadcrumb, onHome, onProfile, onSignOut, children, fill = false }) {
   const isMobile = useIsMobile()
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', minWidth: isMobile ? 0 : 1080, fontFamily: 'var(--font-ui)' }}>
@@ -70,30 +70,39 @@ export function Chrome({ me, breadcrumb, onHome, onSignOut, children, fill = fal
         <div style={{ flex: 1 }} />
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          <span
-            style={{
-              width: 26,
-              height: 26,
-              borderRadius: 99,
-              background: 'var(--euc-deep)',
-              color: 'var(--paper)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontSize: 11,
-              fontWeight: 800,
-            }}
+          {/* Assessor identity doubles as the entry to the standalone profile
+              page (#/profile). The avatar + name are one clickable target. */}
+          <button
+            className="ec-press"
+            onClick={onProfile}
+            title="View my profile"
+            style={{ display: 'flex', alignItems: 'center', gap: 9, border: 'none', background: 'transparent', cursor: onProfile ? 'pointer' : 'default', padding: 0 }}
           >
-            {initials(me?.name, me?.email)}
-          </span>
-          {!isMobile && (
-            <span style={{ fontSize: 12, color: 'var(--ink)', fontWeight: 600 }}>
-              {me?.name || me?.email}{' '}
-              <span className="cs-mono" style={{ color: 'var(--ink-soft)', fontWeight: 400, fontSize: 10.5 }}>
-                · {me?.jurisdiction || '—'} assessor
-              </span>
+            <span
+              style={{
+                width: 26,
+                height: 26,
+                borderRadius: 99,
+                background: 'var(--euc-deep)',
+                color: 'var(--paper)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 11,
+                fontWeight: 800,
+              }}
+            >
+              {initials(me?.name, me?.email)}
             </span>
-          )}
+            {!isMobile && (
+              <span style={{ fontSize: 12, color: 'var(--ink)', fontWeight: 600 }}>
+                {me?.name || me?.email}{' '}
+                <span className="cs-mono" style={{ color: 'var(--ink-soft)', fontWeight: 400, fontSize: 10.5 }}>
+                  · {me?.jurisdiction || '—'} assessor
+                </span>
+              </span>
+            )}
+          </button>
           <button
             className="ec-press"
             onClick={onSignOut}

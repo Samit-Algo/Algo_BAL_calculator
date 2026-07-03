@@ -180,6 +180,9 @@ class Signoff(BaseModel):
     attestation: str | None = None
     # Relative path (under PHOTO_STORAGE_DIR) to the rendered PDF on disk.
     report_path: str
+    # The report template id pinned at signing, so a re-render of a signed case is
+    # byte-stable regardless of any later change to the case's chosen template.
+    template_id: str | None = None
 
 
 class Case(Document):
@@ -207,6 +210,11 @@ class Case(Document):
 
     photos: list[CasePhoto] = Field(default_factory=list)
     status: CaseStatus = CaseStatus.DRAFT
+
+    # Which report template the assessor chose for this case's report/preview/PDF
+    # (see app/services/report_render). "nsw_certifier" (full pack) by default;
+    # unknown ids fall back to the default at render time, so this never errors.
+    report_template_id: str = "nsw_certifier"
 
     # Assessor review workflow (CONSOLE-B3.2). The CURRENT review reason the
     # consumer sees (e.g. why more photos / a site visit are needed). The full,

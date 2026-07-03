@@ -4,11 +4,10 @@
 // assessor). READ-ONLY — the case is never signed here, so the preview always
 // carries the DRAFT watermark and Sign/Download/Send are present-but-inert.
 import { useState } from 'react'
-import { CSectionLabel, CBtn, CBALChip, CStatusChip, Wordmark } from '../components/atoms'
+import { CSectionLabel, CBtn, CStatusChip } from '../components/atoms'
 import { Glyph } from '../components/Glyph'
 import { signCase, getCaseReport } from '../lib/consoleApi'
-
-const SIDES = ['North', 'East', 'South', 'West']
+import { reportSignature, useReportPreview, ReportPreviewFrame } from '../components/ReportPreview'
 
 // Status → the report's review-state line (informational only — nothing is signed).
 const REPORT_STATUS_LABEL = {
@@ -26,12 +25,7 @@ function fmtDay(iso) {
   return `${d.getDate()} ${MONTHS[d.getMonth()]} ${d.getFullYear()}`
 }
 
-function effectiveVeg(s) {
-  return s.overrides?.vegetation_class || s.combined_classification || s.gis_draft_classification || '—'
-}
-
-export function ReportSignoff({ data, me, onGotoWorkspace, isMobile, caseId, onSigned }) {
-  const [template, setTemplate] = useState('nsw')
+export function ReportSignoff({ data, onGotoWorkspace, isMobile, caseId, onSigned, onBack }) {
   const [attest, setAttest] = useState(false)
   const [signing, setSigning] = useState(false)
   const [signError, setSignError] = useState(null)
@@ -39,6 +33,9 @@ export function ReportSignoff({ data, me, onGotoWorkspace, isMobile, caseId, onS
 
   const signed = data.status === 'COMPLETE'
   const signoff = data.signoff || null
+  // The live server-rendered preview (shared hook) — the SAME saved template the
+  // Preview page confirmed. Refetches whenever the case's report fields change.
+  const { html: previewHtml, error: previewError } = useReportPreview(caseId, reportSignature(data))
 
   async function handleSign() {
     if (signing || signed) return
@@ -54,26 +51,31 @@ export function ReportSignoff({ data, me, onGotoWorkspace, isMobile, caseId, onS
     }
   }
 
+  // Download the report PDF — the backend renders the SAME report shown in the
+  // preview to PDF (the signed certificate once signed, else the current
+  // preliminary report). This is the one document the end-user also receives.
   async function handleDownload() {
     if (downloading) return
     setDownloading(true)
+    setSignError(null)
     try {
       const url = await getCaseReport(caseId)
       if (url) {
-        window.open(url, '_blank', 'noopener')
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `EmberCheck-${data.job_number || caseId}-report.pdf`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
         setTimeout(() => URL.revokeObjectURL(url), 60000)
       } else {
-        setSignError('Could not open the report. Please try again.')
+        setSignError('Could not generate the report. Please try again.')
       }
     } finally {
       setDownloading(false)
     }
   }
 
-  const sectors = data.sectors || []
-  const bySide = Object.fromEntries(sectors.map((s) => [s.compass_side, s]))
-  const p = data.property || {}
-  const reportId = `${data.job_number}-R1`
   // The backend's derived review checklist (CONSOLE-F3.3) — rendered verbatim.
   const checklist = data.review_checklist || []
 
@@ -85,39 +87,15 @@ export function ReportSignoff({ data, me, onGotoWorkspace, isMobile, caseId, onS
           <div>
             <h2 style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 21, margin: '0 0 3px', color: 'var(--ink)' }}>Report &amp; sign-off</h2>
             <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', lineHeight: 1.5 }}>The system drafted. You determine.</div>
-          </div>
-
-          <div className="cs-card" style={{ padding: '14px 16px' }}>
-            <CSectionLabel style={{ marginBottom: 10 }}>Template — jurisdiction</CSectionLabel>
-            {[
-              ['nsw', 'NSW — certifier pack', 'Methodology, evidence per elevation, clause-referenced requirements'],
-              ['qld', 'QLD — DA/MCU pack', 'QDC RS templates; bushfire hazard overlay references'],
-            ].map(([id, label, sub]) => (
+            {onBack && !signed && (
               <button
-                key={id}
                 className="ec-press"
-                onClick={() => setTemplate(id)}
-                style={{
-                  display: 'flex',
-                  gap: 10,
-                  width: '100%',
-                  textAlign: 'left',
-                  padding: '9px 10px',
-                  borderRadius: 9,
-                  cursor: 'pointer',
-                  border: 'none',
-                  marginBottom: 4,
-                  fontFamily: 'var(--font-ui)',
-                  background: template === id ? 'color-mix(in oklab, var(--euc-deep) 9%, transparent)' : 'transparent',
-                }}
+                onClick={onBack}
+                style={{ marginTop: 6, background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--euc-deep)', fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-ui)' }}
               >
-                <span style={{ width: 16, height: 16, borderRadius: 99, boxSizing: 'border-box', flexShrink: 0, marginTop: 1, border: template === id ? '5px solid var(--euc-deep)' : '1.6px solid color-mix(in oklab, var(--ink) 32%, transparent)' }} />
-                <span>
-                  <span style={{ display: 'block', fontSize: 13, fontWeight: 700, color: 'var(--ink)' }}>{label}</span>
-                  <span style={{ display: 'block', fontSize: 11, color: 'var(--ink-soft)', lineHeight: 1.4 }}>{sub}</span>
-                </span>
+                ← Back to preview / change template
               </button>
-            ))}
+            )}
           </div>
 
           <div className="cs-card" style={{ padding: '14px 16px' }}>
@@ -176,10 +154,10 @@ export function ReportSignoff({ data, me, onGotoWorkspace, isMobile, caseId, onS
                   {signoff?.assessor_name && <div>By {signoff.assessor_name}</div>}
                 </div>
                 <CBtn variant="primary" icon="doc" onClick={handleDownload} disabled={downloading} style={{ width: '100%', minHeight: 38 }}>
-                  {downloading ? 'Opening…' : 'Download PDF'}
+                  {downloading ? 'Preparing…' : 'Download PDF'}
                 </CBtn>
                 <div style={{ marginTop: 8, fontSize: 11, color: 'var(--ink-soft)' }}>
-                  This determination is signed and the case is locked to further edits.
+                  This is the issued determination — the same PDF the client receives. The case is locked to further edits.
                 </div>
               </>
             ) : (
@@ -209,6 +187,12 @@ export function ReportSignoff({ data, me, onGotoWorkspace, isMobile, caseId, onS
                     ? 'Signing freezes the determination and issues the PDF to the client.'
                     : 'Mark every elevation reviewed and clear open requests to enable signing.'}
                 </div>
+                {/* Download the current report as a PDF before signing — it is
+                    the same document (marked PRELIMINARY) that signing will issue. */}
+                <div style={{ borderTop: '1px solid var(--line)', margin: '12px 0 10px' }} />
+                <CBtn variant="ghost" icon="doc" onClick={handleDownload} disabled={downloading || !previewHtml} style={{ width: '100%', minHeight: 36 }}>
+                  {downloading ? 'Preparing…' : 'Download PDF (preview)'}
+                </CBtn>
               </>
             )}
           </div>
@@ -232,125 +216,12 @@ export function ReportSignoff({ data, me, onGotoWorkspace, isMobile, caseId, onS
             )}
           </div>
 
-          <div style={{ background: '#FDFCF6', border: '1px solid var(--line)', borderRadius: 6, boxShadow: '0 14px 40px rgba(40,36,24,0.13)', padding: isMobile ? '22px 18px' : '38px 44px', position: 'relative', overflow: 'hidden' }}>
-            {/* DRAFT watermark while unsigned; once signed the preview is the
-                issued document (the downloadable PDF is the authoritative copy). */}
-            {!signed && (
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-                <span style={{ transform: 'rotate(-24deg)', fontSize: isMobile ? 22 : 38, fontWeight: 800, letterSpacing: '0.14em', color: 'color-mix(in oklab, #B06F3A 26%, transparent)', border: '3px dashed color-mix(in oklab, #B06F3A 30%, transparent)', borderRadius: 12, padding: isMobile ? '8px 16px' : '10px 28px', whiteSpace: 'nowrap' }}>
-                  DRAFT — NOT A DETERMINATION
-                </span>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '2px solid var(--ink)', paddingBottom: 14, marginBottom: 16 }}>
-              <div>
-                <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 19, color: 'var(--ink)' }}>Bushfire Attack Level Assessment</div>
-                <div className="cs-mono" style={{ fontSize: 10.5, color: 'var(--ink-soft)', marginTop: 2 }}>
-                  {template === 'nsw' ? 'NSW certifier pack' : 'QLD DA/MCU pack'} · {reportId} · {fmtDay(data.created_at)}
-                </div>
-              </div>
-              <Wordmark size={20} />
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14, marginBottom: 16 }}>
-              <div>
-                <CSectionLabel style={{ marginBottom: 3 }}>Subject site</CSectionLabel>
-                <div style={{ fontSize: 12.5, color: 'var(--ink)', lineHeight: 1.5 }}>
-                  {p.matched_address || p.address}
-                  <br />
-                  <span className="cs-mono" style={{ fontSize: 10.5, color: 'var(--ink-soft)' }}>{[p.lga ? `${p.lga} LGA` : null, p.state].filter(Boolean).join(' · ')}</span>
-                </div>
-              </div>
-              <div>
-                <CSectionLabel style={{ marginBottom: 3 }}>Assessor</CSectionLabel>
-                <div style={{ fontSize: 12.5, color: 'var(--ink)', lineHeight: 1.5 }}>
-                  {me?.name || me?.email || '—'}
-                  <br />
-                  <span className="cs-mono" style={{ fontSize: 10.5, color: 'var(--ink-soft)' }}>{me?.jurisdiction ? `${me.jurisdiction} accredited assessor` : 'accredited assessor'}</span>
-                </div>
-              </div>
-            </div>
-
-            <CSectionLabel style={{ marginBottom: 5 }}>Methodology</CSectionLabel>
-            <p style={{ margin: '0 0 16px', fontSize: 11.5, lineHeight: 1.6, color: 'var(--ink)' }}>
-              Assessed under the simplified procedure of AS 3959 (Method 1), informed by the public datasets tabled below and
-              any site photography on file. Machine-derived values are surfaced with their source and confidence; the
-              determination is the accredited assessor’s own and is not made until signed.
-            </p>
-
-            <CSectionLabel style={{ marginBottom: 5 }}>Data sources</CSectionLabel>
-            <div className="ec-scroll" style={{ overflowX: 'auto', marginBottom: 16 }}>
-            <table className="cs-doctable">
-              <thead>
-                <tr><th>Source</th><th>Vintage</th><th>Resolution</th></tr>
-              </thead>
-              <tbody>
-                <tr><td>NSW SVTM vegetation mapping</td><td className="cs-mono">2019</td><td className="cs-mono">5 m</td></tr>
-                <tr><td>LiDAR DEM (terrain / effective slope)</td><td className="cs-mono">2022</td><td className="cs-mono">1 m</td></tr>
-                <tr><td>NSW cadastre &amp; road reserves</td><td className="cs-mono">2024</td><td className="cs-mono">±1 m</td></tr>
-                <tr><td>Site photography (per elevation, where supplied)</td><td className="cs-mono">on file</td><td className="cs-mono">—</td></tr>
-              </tbody>
-            </table>
-            </div>
-
-            <CSectionLabel style={{ marginBottom: 5 }}>Determination by elevation</CSectionLabel>
-            <div className="ec-scroll" style={{ overflowX: 'auto', marginBottom: 18 }}>
-            <table className="cs-doctable">
-              <thead>
-                <tr><th>Elevation</th><th>Vegetation</th><th>Slope</th><th>Separation</th><th>BAL</th><th>Basis</th></tr>
-              </thead>
-              <tbody>
-                {SIDES.map((side) => {
-                  const s = bySide[side]
-                  const basis = s?.overrides?.vegetation_class
-                    ? 'overridden by assessor'
-                    : s?.reviewed
-                      ? 'confirmed by assessor'
-                      : 'suggested — unreviewed'
-                  return (
-                    <tr key={side}>
-                      <td style={{ fontWeight: 700 }}>{side[0]}</td>
-                      <td>{s ? effectiveVeg(s) : '—'}</td>
-                      <td className="cs-mono">{s?.effective_slope_degrees != null ? `${s.effective_slope_degrees}°${s.slope_direction ? ' ' + s.slope_direction : ''}` : '—'}</td>
-                      <td className="cs-mono">{s?.distance_m != null ? `${s.distance_m} m` : '—'}</td>
-                      <td className="cs-mono" style={{ fontWeight: 700 }}>{s?.final_bal || '—'}</td>
-                      <td style={{ color: 'var(--ink-soft)' }}>{basis}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, padding: '12px 16px', borderRadius: 8, background: 'color-mix(in oklab, var(--ink) 5%, transparent)', marginBottom: 18 }}>
-              <div style={{ fontSize: 12, color: 'var(--ink)' }}>
-                <strong>Overall determination</strong> — highest applicable elevation
-                {data.governing_compass_side ? ` (${data.governing_compass_side})` : ''}
-              </div>
-              <CBALChip bal={data.bal_rating} size="lg" suggested />
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', borderTop: '1px solid var(--line)', paddingTop: 14 }}>
-              <div>
-                <CSectionLabel style={{ marginBottom: 4 }}>Assessor signature</CSectionLabel>
-                <div style={{ minWidth: 190, borderBottom: '1.5px solid var(--ink-soft)', height: 24, display: 'flex', alignItems: 'flex-end', paddingBottom: 2 }}>
-                  {signed && (
-                    <span style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, color: 'var(--ink)' }}>
-                      {signoff?.assessor_name || me?.name || me?.email}
-                    </span>
-                  )}
-                </div>
-                <div className="cs-mono" style={{ fontSize: 10, color: signed ? 'var(--euc-deep)' : 'var(--ink-soft)', marginTop: 3 }}>
-                  {signed
-                    ? `Signed ${fmtDay(signoff?.signed_at)}${signoff?.report_number ? ' · ' + signoff.report_number : ''}`
-                    : 'Unsigned'}
-                </div>
-              </div>
-              <div className="cs-mono" style={{ fontSize: 9.5, color: 'var(--ink-soft)', textAlign: 'right', maxWidth: 280, lineHeight: 1.5 }}>
-                Prepared with EmberCheck Console. The system proposes; the accredited assessor determines.
-              </div>
-            </div>
+          {/* LIVE document preview — the SAME shared iframe the Preview page uses;
+              the server renders the report template (also the eventual PDF, so
+              they can't drift). We do NOT rebuild the report in React. */}
+          <ReportPreviewFrame html={previewHtml} error={previewError} isMobile={isMobile} />
+          <div className="cs-mono" style={{ marginTop: 8, fontSize: 9.5, color: 'var(--ink-soft)', textAlign: 'right', lineHeight: 1.5 }}>
+            Live preview rendered from the report template · the same template fills the issued PDF · the system proposes, the accredited assessor determines.
           </div>
         </div>
       </div>

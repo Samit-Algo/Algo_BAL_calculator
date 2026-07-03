@@ -1,31 +1,51 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { ECCard, ECEyebrow } from './ui/ECCard'
 import ECButton from './ui/ECButton'
 import Glyph from './ui/Glyph'
 import { useAuth } from '../auth/AuthContext'
 import { listAssessorsForCase, submitCase } from '../lib/cases'
+import { getAssessorPublicPhotoUrl } from '../lib/assessor'
+import AssessorProfileModal from './AssessorProfileModal'
 
 function assessorName(a) {
   return a.business_name || a.legal_name || 'Accredited assessor'
 }
 
-// DEMO ONLY: there is no real rating system yet (no job history at launch). Show
-// the same placeholder rating for every assessor so the choose screen looks
-// complete in the demo. Replace with a real, per-assessor rating later.
-const DEMO_RATING = '4.9'
+function badgeInitials(a) {
+  const src = (a.legal_name || a.business_name || '').trim()
+  if (!src) return '··'
+  const parts = src.split(/\s+/).filter(Boolean)
+  return (parts.length >= 2 ? parts[0][0] + parts[1][0] : src.slice(0, 2)).toUpperCase()
+}
 
-function RatingBadge() {
+// A small circular profile badge for a picker row: the assessor's photo when they
+// have one (a.has_photo), else their initials.
+export function AssessorBadge({ assessor }) {
+  const [url, setUrl] = useState(null)
+  const urlRef = useRef(null)
+  useEffect(() => {
+    let cancelled = false
+    if (assessor.has_photo) {
+      getAssessorPublicPhotoUrl(assessor.assessor_id).then((u) => {
+        if (cancelled) { if (u) URL.revokeObjectURL(u); return }
+        urlRef.current = u
+        setUrl(u)
+      })
+    }
+    return () => { cancelled = true; if (urlRef.current) URL.revokeObjectURL(urlRef.current) }
+  }, [assessor.assessor_id, assessor.has_photo])
+
   return (
-    <span
-      title="Demo rating"
+    <div
       style={{
-        display: 'inline-flex', alignItems: 'center', gap: 3, flexShrink: 0,
-        padding: '2px 8px', borderRadius: 99, fontSize: 12, fontWeight: 700,
-        color: '#7a5418', background: 'color-mix(in oklab, var(--ochre) 22%, transparent)',
+        width: 44, height: 44, borderRadius: '50%', flexShrink: 0, overflow: 'hidden',
+        display: 'grid', placeItems: 'center',
+        background: 'linear-gradient(150deg, var(--euc-deep), color-mix(in oklab, var(--euc-deep) 72%, var(--ochre)))',
+        color: 'var(--paper)', fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 15.5,
       }}
     >
-      <span aria-hidden="true">★</span> {DEMO_RATING}
-    </span>
+      {url ? <img src={url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : badgeInitials(assessor)}
+    </div>
   )
 }
 
@@ -39,6 +59,7 @@ function ChooseAssessorModal({ caseId, onClose, onSubmitted }) {
   const [error, setError] = useState(null)
   const [submittingId, setSubmittingId] = useState(null)
   const [chosen, setChosen] = useState(null)
+  const [profileId, setProfileId] = useState(null) // assessor whose profile is open
 
   useEffect(() => {
     let cancelled = false
@@ -72,6 +93,7 @@ function ChooseAssessorModal({ caseId, onClose, onSubmitted }) {
   }
 
   return (
+   <>
     <div
       role="dialog"
       aria-modal="true"
@@ -133,13 +155,26 @@ function ChooseAssessorModal({ caseId, onClose, onSubmitted }) {
                       padding: '12px 14px', borderRadius: 12, border: '1px solid var(--line)', background: 'var(--paper)',
                     }}
                   >
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <span style={{ fontWeight: 700, fontSize: 14.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{assessorName(a)}</span>
-                        <RatingBadge />
-                      </div>
-                      <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 2 }}>
-                        {[a.accreditation_level && `Level ${a.accreditation_level}`, (a.operating_states || []).join(', ')].filter(Boolean).join(' · ')}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+                      <AssessorBadge assessor={a} />
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 700, fontSize: 14.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{assessorName(a)}</div>
+                        <div style={{ fontSize: 12.5, color: 'var(--ink-soft)', marginTop: 2 }}>
+                          {[a.accreditation_level && `Level ${a.accreditation_level}`, (a.operating_states || []).join(', ')].filter(Boolean).join(' · ')}
+                        </div>
+                        <button
+                          type="button"
+                          className="ec-press"
+                          onClick={() => setProfileId(a.assessor_id)}
+                          style={{
+                            marginTop: 6, padding: 0, border: 'none', background: 'transparent', cursor: 'pointer',
+                            fontFamily: 'var(--font-ui)', fontSize: 12.5, fontWeight: 700, color: 'var(--euc-deep)',
+                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                          }}
+                        >
+                          View profile
+                          <Glyph name="arrowRight" size={13} />
+                        </button>
                       </div>
                     </div>
                     <ECButton small onClick={() => choose(a)} disabled={!!submittingId}>
@@ -157,6 +192,11 @@ function ChooseAssessorModal({ caseId, onClose, onSubmitted }) {
         )}
       </div>
     </div>
+
+    {profileId && (
+      <AssessorProfileModal assessorId={profileId} onClose={() => setProfileId(null)} />
+    )}
+   </>
   )
 }
 

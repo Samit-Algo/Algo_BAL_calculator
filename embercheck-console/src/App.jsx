@@ -10,13 +10,16 @@ import { Chrome } from './components/Chrome'
 import { LoginScreen } from './screens/LoginScreen'
 import { WorklistScreen } from './screens/WorklistScreen'
 import { WorkspaceScreen } from './screens/WorkspaceScreen'
+import { AssessorProfile } from './screens/AssessorProfile'
 
 const DENIED_MESSAGE = 'This console is for accredited assessors only.'
 
 // --- tiny hash router --------------------------------------------------------
 
 function parseHash() {
-  const m = (window.location.hash || '').match(/^#\/job\/(.+)$/)
+  const hash = window.location.hash || ''
+  if (hash === '#/profile') return { name: 'profile' }
+  const m = hash.match(/^#\/job\/(.+)$/)
   return m ? { name: 'job', id: decodeURIComponent(m[1]) } : { name: 'worklist' }
 }
 
@@ -124,6 +127,7 @@ export default function App() {
 
   // phase === 'app'
   const onJob = route.name === 'job'
+  const onProfile = route.name === 'profile'
   const job = onJob && selectedJob && selectedJob.id === route.id ? selectedJob : null
   // Breadcrumb: prefer the clicked row's address, else the address the workspace
   // reports once it loads (so a hard refresh on #/job/<id> still shows it).
@@ -131,9 +135,11 @@ export default function App() {
 
   return (
     <>
-      <Chrome me={me} breadcrumb={breadcrumb} onHome={() => navigate('')} onSignOut={signOut} fill={onJob}>
+      <Chrome me={me} breadcrumb={breadcrumb} onHome={() => navigate('')} onProfile={() => navigate('#/profile')} onSignOut={signOut} fill={onJob}>
         {onJob ? (
           <WorkspaceScreen caseId={route.id} onTitle={setJobTitle} me={me} />
+        ) : onProfile ? (
+          <AssessorProfile onHome={() => navigate('')} />
         ) : (
           <WorklistScreen onOpenJob={openJob} toast={toast} />
         )}

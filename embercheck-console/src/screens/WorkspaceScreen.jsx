@@ -33,6 +33,7 @@ import { useIsMobile } from '../lib/useIsMobile'
 import { OverrideEditor, effectiveVeg, hasAssessorOverride } from '../components/OverrideEditor'
 import { PhotoReview } from './PhotoReview'
 import { AuditTrail } from './AuditTrail'
+import { ReportPreviewScreen } from './ReportPreviewScreen'
 import { ReportSignoff } from './ReportSignoff'
 
 const SIDES = ['North', 'East', 'South', 'West']
@@ -60,8 +61,9 @@ function forcedConservative(s) {
 const TABS = [
   ['workspace', 'Workspace'],
   ['photo', 'Photo review'],
-  ['audit', 'Audit trail'],
+  ['report-preview', 'Report preview'],
   ['report', 'Report & sign-off'],
+  ['audit', 'Audit trail'],
 ]
 
 // ── case-level review status (CONSOLE-B3.2) ─────────────────────────────────
@@ -725,7 +727,7 @@ function ComingNext({ label }) {
 }
 
 // ── the screen ──────────────────────────────────────────────────────────────
-export function WorkspaceScreen({ caseId, onTitle, me }) {
+export function WorkspaceScreen({ caseId, onTitle }) {
   const isMobile = useIsMobile()
   // The fetch result is tagged with its caseId; loading is DERIVED by comparing
   // (no synchronous setState in the effect). Default selection + tab reset are
@@ -1009,8 +1011,10 @@ export function WorkspaceScreen({ caseId, onTitle, me }) {
           <PhotoReview caseId={caseId} data={data} actions={actions} selected={selected} setSelected={selectSide} isMobile={isMobile} />
         ) : tab === 'audit' ? (
           <AuditTrail data={data} isMobile={isMobile} />
+        ) : tab === 'report-preview' ? (
+          <ReportPreviewScreen data={data} caseId={caseId} onContinue={() => setTab('report')} isMobile={isMobile} />
         ) : tab === 'report' ? (
-          <ReportSignoff data={data} me={me} caseId={caseId} onSigned={handleSigned} onGotoWorkspace={() => setTab('workspace')} isMobile={isMobile} />
+          <ReportSignoff data={data} caseId={caseId} onSigned={handleSigned} onGotoWorkspace={() => setTab('workspace')} onBack={() => setTab('report-preview')} isMobile={isMobile} />
         ) : (
           <ComingNext label={TABS.find(([id]) => id === tab)?.[1]} />
         )}

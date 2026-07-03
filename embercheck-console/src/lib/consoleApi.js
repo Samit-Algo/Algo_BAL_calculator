@@ -18,6 +18,105 @@ export async function getMe() {
   return { ok: false, reason: 'error' }
 }
 
+// GET /assessor/me — the signed-in assessor's own profile (the same endpoint the
+// consumer app uses; the console user IS an assessor, so it returns 200 with the
+// AssessorProfileRead shape). Returns null on 404 (no profile lodged yet), throws
+// on any other non-OK so the profile screen can show an error state.
+export async function getMyAssessorProfile() {
+  const response = await apiFetch('/assessor/me')
+  if (response.status === 404) return null
+  if (!response.ok) {
+    const err = new Error('Could not load your profile.')
+    err.status = response.status
+    throw err
+  }
+  return response.json()
+}
+
+// PATCH /assessor/me — update the caller's OWN basic profile fields. The backend
+// accepts a narrow allow-list only (name/phone/business/trading/address/operating
+// area/availability/qualification); locked fields (accreditation/abn/insurance/
+// status) are rejected there, so this never sends them. Returns the refreshed
+// AssessorProfileRead. A 422 surfaces the backend's validation message.
+export async function updateMyAssessorProfile(payload) {
+  const response = await apiFetch('/assessor/me', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  })
+  if (!response.ok) {
+    let detail = null
+    try {
+      detail = (await response.json())?.detail
+    } catch {
+      /* non-JSON body — fall through to a generic message */
+    }
+    const err = new Error(typeof detail === 'string' ? detail : 'Could not save your changes.')
+    err.status = response.status
+    throw err
+  }
+  return response.json()
+}
+
+// POST /assessor/documents with doc_type=profile_photo — upload a new profile
+// photo. Content-Type is left undefined so the browser sets the multipart
+// boundary (buildHeaders drops undefined keys), matching the consumer app's
+// upload. Returns the refreshed profile (has_photo becomes true).
+export async function uploadAssessorProfilePhoto(file) {
+  const formData = new FormData()
+  formData.append('files', file)
+  formData.append('doc_types', 'profile_photo')
+  const response = await apiFetch('/assessor/documents', {
+    method: 'POST',
+    body: formData,
+    headers: { 'Content-Type': undefined },
+  })
+  if (!response.ok) {
+    const err = new Error(response.status === 413 ? 'That image is too large (max 10 MB).' : 'Could not upload your photo.')
+    err.status = response.status
+    throw err
+  }
+  return response.json()
+}
+
+// GET /assessor/me/photo — the caller's own profile photo. A plain <img src> can't
+// carry the Bearer token, so we fetch via apiFetch and wrap the blob in an object
+// URL (same pattern as getSectorPhoto). Returns null if no photo is on file. The
+// caller is responsible for URL.revokeObjectURL when swapping/unmounting.
+export async function getMyAssessorPhotoUrl() {
+  const response = await apiFetch('/assessor/me/photo')
+  if (!response.ok) return null
+  const blob = await response.blob()
+  return URL.createObjectURL(blob)
+}
+
+// POST /assessor/me/banner — upload a banner image and switch the banner to it.
+// Same multipart pattern as the photo upload. Returns the refreshed profile
+// (has_banner_image true, banner_type 'image').
+export async function uploadAssessorBanner(file) {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await apiFetch('/assessor/me/banner', {
+    method: 'POST',
+    body: formData,
+    headers: { 'Content-Type': undefined },
+  })
+  if (!response.ok) {
+    const err = new Error(response.status === 413 ? 'That image is too large (max 10 MB).' : 'Could not upload your banner.')
+    err.status = response.status
+    throw err
+  }
+  return response.json()
+}
+
+// GET /assessor/me/banner — the caller's own banner image as an object URL (same
+// Bearer-safe blob pattern as the photo). Returns null if no banner is on file.
+export async function getMyAssessorBannerUrl() {
+  const response = await apiFetch('/assessor/me/banner')
+  if (!response.ok) return null
+  const blob = await response.blob()
+  return URL.createObjectURL(blob)
+}
+
 // GET /console/worklist?state=<backend ui_state>. `state` is the backend's
 // ui_state token (in-review / needs-photos / ready-to-sign / signed / refer) or
 // null/undefined for "All". Throws on a non-OK response so the caller can show
@@ -102,6 +201,17 @@ export async function updateStatus(caseId, body) {
   throw await writeError(response)
 }
 
+// PATCH /console/cases/{id}/report-template — save which report template the case
+// renders with. `templateId` is one of the backend ids (nsw_certifier |
+// owner_summary). Returns { id, report_template_id }. A 400 (unknown id) / 409
+// (signed, locked) is thrown with the backend message for inline display.
+export async function setReportTemplate(caseId, templateId) {
+  const path = `/console/cases/${encodeURIComponent(caseId)}/report-template`
+  const response = await apiFetch(path, { method: 'PATCH', body: JSON.stringify({ template_id: templateId }) })
+  if (response.ok) return response.json()
+  throw await writeError(response)
+}
+
 // GET a sector photo's image bytes (assessor-gated) and return an object URL the
 // <img> can use. The Bearer token must be attached, so we fetch via apiFetch and
 // wrap the blob — a plain <img src> can't carry the Authorization header. Returns
@@ -126,6 +236,21 @@ export async function signCase(caseId, { attestation } = {}) {
   })
   if (response.ok) return response.json()
   throw await writeError(response)
+}
+
+// GET /console/cases/{id}/report/preview — the LIVE report preview as filled
+// HTML, server-rendered from the report template (the SAME renderer the eventual
+// signed PDF uses, so preview and document can't drift). Returns the HTML string
+// to drop into an iframe srcDoc. Throws on a non-OK response.
+export async function getReportPreview(caseId) {
+  const path = `/console/cases/${encodeURIComponent(caseId)}/report/preview`
+  const response = await apiFetch(path)
+  if (!response.ok) {
+    const err = new Error(response.status === 404 ? 'Case not available.' : 'Could not load the report preview.')
+    err.status = response.status
+    throw err
+  }
+  return response.text()
 }
 
 // GET /console/cases/{id}/report — fetch the signed PDF (Bearer) and return an

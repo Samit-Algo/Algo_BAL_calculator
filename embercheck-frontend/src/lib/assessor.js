@@ -21,6 +21,56 @@ export async function getMyAssessorProfile() {
   return response.json()
 }
 
+// GET /assessor/{assessorId}/public — another assessor's PUBLIC profile (the
+// safe allow-list the backend exposes to any logged-in consumer choosing who
+// certifies their case). Never carries private data (phone/abn/insurer/etc.);
+// insurance is a presence flag only. A 404 means "no such approved assessor"
+// (unknown id, or a non-APPROVED profile the backend hides).
+export async function getPublicAssessorProfile(assessorId) {
+  let response
+  try {
+    response = await apiFetch(`/assessor/${assessorId}/public`)
+  } catch {
+    throw new Error('We couldn’t reach the server. Please try again.')
+  }
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Please log in to continue.')
+    if (response.status === 404) throw new Error('This assessor’s profile isn’t available.')
+    throw new Error('We couldn’t load this profile just now. Please try again.')
+  }
+  return response.json()
+}
+
+// GET /assessor/{id}/photo — an APPROVED assessor's public profile photo as an
+// object URL. A plain <img src> can't carry the Bearer token, so we fetch via
+// apiFetch and wrap the blob. Returns null if the assessor has no photo (or the
+// call fails). Caller revokes the URL when swapping/unmounting.
+export async function getAssessorPublicPhotoUrl(assessorId) {
+  let response
+  try {
+    response = await apiFetch(`/assessor/${assessorId}/photo`)
+  } catch {
+    return null
+  }
+  if (!response.ok) return null
+  const blob = await response.blob()
+  return URL.createObjectURL(blob)
+}
+
+// GET /assessor/{id}/banner — an APPROVED assessor's public banner image as an
+// object URL (only when they chose an image banner). Returns null otherwise.
+export async function getAssessorPublicBannerUrl(assessorId) {
+  let response
+  try {
+    response = await apiFetch(`/assessor/${assessorId}/banner`)
+  } catch {
+    return null
+  }
+  if (!response.ok) return null
+  const blob = await response.blob()
+  return URL.createObjectURL(blob)
+}
+
 // POST /assessor/register with a JSON body (mirrors createCase). Returns the
 // created profile. A 409 means an application already exists.
 export async function registerAssessor(payload) {

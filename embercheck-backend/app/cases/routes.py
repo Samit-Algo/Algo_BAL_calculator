@@ -226,6 +226,7 @@ async def list_assessors_for_case(
             accreditation_number=p.accreditation_number,
             operating_states=p.operating_states,
             accepting_new_work=p.accepting_new_work,
+            has_photo=bool(p.profile_photo_path),
         )
         for p in profiles
     ]

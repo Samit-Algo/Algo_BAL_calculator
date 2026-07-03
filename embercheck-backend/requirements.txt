@@ -17,3 +17,12 @@ google-auth==2.43.0
 
 # P0 sign-off: pure-Python PDF certificate generation (no native deps).
 reportlab==4.2.5
+
+# Report preview: aerial site map (Figure 1) — stitches Esri World Imagery tiles
+# and draws the boundary/buffer overlays for the report. httpx (above) fetches.
+Pillow>=10.0
+
+# Report PDF: the report HTML is printed to PDF by headless Chromium so the PDF is
+# pixel-faithful to the preview. Uses a system browser channel (Edge/Chrome) if
+# present, else run `playwright install chromium` once to fetch a bundled browser.
+playwright>=1.40

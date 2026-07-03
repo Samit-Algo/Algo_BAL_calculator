@@ -10,14 +10,18 @@
 # This module only READS Case + User documents the consumer flow already wrote;
 # it never runs the assessment pipeline or mutates a case.
 
+import base64
 from datetime import datetime, timedelta, timezone
+from io import BytesIO
 from pathlib import Path
+
+import anyio.to_thread
 
 from beanie import PydanticObjectId
 from beanie.operators import In
 from bson.errors import InvalidId
-from fastapi import APIRouter, Body, Depends, HTTPException, status
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Body, Depends, HTTPException, Response, status
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from app.auth.backend import current_assessor
@@ -28,7 +32,14 @@ from app.models.audit import AuditChange, CaseAuditEvent
 from app.models.case import Case, CaseStatus, SectorEvidence, SectorOverrides, Signoff
 from app.models.user import User
 from app.services.assessment_pipeline import BAL_SEVERITY, reconcile_sector_bal
-from app.services.report_pdf import DeterminationRow, ReportContext, render_report_pdf
+from app.services.report_pdf import DeterminationRow
+from app.services.report_render import (
+    ALLOWED_TEMPLATE_IDS,
+    render_report_html,
+    resolve_template_id,
+)
+from app.services.report_map import render_site_map
+from app.services.report_pdf_html import render_report_pdf as render_report_pdf_from_html
 
 router = APIRouter(prefix="/console", tags=["console"])
 
@@ -732,6 +743,349 @@ async def console_get_case(
         transects=(case.boundary_assessment or {}).get("per_direction"),
         signoff=_signoff_summary(case),
     )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONSOLE-B2.1: live report preview. The case is projected into the report
+# template context and rendered by app.services.report_render — THE single source
+# the eventual signed PDF will also render from, so the on-screen preview and the
+# issued document can never drift. Everything is derived on read; nothing stored.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_FMT_DAY = "%d %b %Y"
+
+# Human label for a side's value_sources.vegetation provenance.
+_VEG_BASIS = {
+    "photo": "Site photo (AI-assisted)",
+    "gis_draft": "Public vegetation map (SVTM)",
+    "override": "Assessor override",
+}
+# AS 3959-2018 construction sections to consult, by BAL band (Table 4 column).
+_BAL_SECTIONS = {
+    "BAL-LOW": "4",
+    "BAL-12.5": "3 and 5",
+    "BAL-19": "3 and 6",
+    "BAL-29": "3 and 7",
+    "BAL-40": "3 and 8",
+    "BAL-FZ": "3 and 9",
+}
+# Human label for the review_flags a flagged side may carry (the uncertain →
+# Forest case has its own verbatim honesty line, so it is handled separately).
+_FLAG_LABELS = {
+    "photo_lower_than_draft": "Site photo read lower than the public-data draft; conservative value kept.",
+    "photo_lower_than_draft_review": "Photo lowered the reading — held for assessor review (never a false-low).",
+    "lowered_requires_review": "A lowering was applied; evidence-backed assessor review required.",
+    "override_lower_than_draft_review": "Assessor override lower than the calculated value; flagged for defensibility.",
+    "override_vegetation_no_distance_review": "Overridden vegetation has no measurable separation; flagged unassessable.",
+    "geometry_overridden": "Geometry overridden by the assessor.",
+}
+
+
+def _fmt_day(dt: datetime | None) -> str:
+    return dt.strftime(_FMT_DAY) if dt else "—"
+
+
+def _flag_reason(flags: list[str]) -> str:
+    """First human-readable reason for a side's non-uncertain review flags."""
+    for f in flags:
+        if f in _FLAG_LABELS:
+            return _FLAG_LABELS[f]
+    return ""
+
+
+def _photo_data_uri(file_path: str | None) -> str | None:
+    """Read a sector photo off disk, downscale it, and return it as a base64 JPEG
+    data URI, so the report HTML is self-contained — the preview iframe and the
+    PDF both render the image with no auth round-trip and nothing to drift.
+    Downscaling (max 1100 px, JPEG q82) keeps the report light and the PDF fast:
+    the plot column is only ~320 px wide, so full-resolution originals are wasted
+    bytes. Path-traversal guarded against the photo store, like the stream route."""
+    if not file_path:
+        return None
+    base = Path(media_settings.PHOTO_STORAGE_DIR).resolve()
+    full = (base / file_path).resolve()
+    if base != full and base not in full.parents:
+        return None
+    if not full.is_file():
+        return None
+    try:
+        from PIL import Image
+
+        with Image.open(full) as img:
+            img = img.convert("RGB")
+            if img.width > 1100:
+                img = img.resize((1100, round(img.height * 1100 / img.width)), Image.LANCZOS)
+            buf = BytesIO()
+            img.save(buf, format="JPEG", quality=82, optimize=True)
+        return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:
+        # Fall back to the original bytes if Pillow can't process the file.
+        mime = "image/png" if full.suffix.lower() == ".png" else "image/jpeg"
+        return f"data:{mime};base64," + base64.b64encode(full.read_bytes()).decode("ascii")
+
+
+def _photo_evidence(ev_by_side: dict, sectors: dict) -> list[dict]:
+    """Table 1 (Vegetation Classification) rows — one per uploaded site photo,
+    across the four sides in compass order. Each row carries the embedded image,
+    the side's effective class, the VLM's reasoning as the description, and the
+    slope, mirroring the per-plot photo evidence in a standard BAL report."""
+    rows: list[dict] = []
+    for side in COMPASS_SIDES:
+        ev = ev_by_side.get(side)
+        if not ev or not ev.photos:
+            continue
+        sector = sectors[side]
+        slope = sector.effective_slope_degrees
+        slope_text = (
+            f"{slope}° {sector.slope_direction or ''}".strip() if slope is not None else "—"
+        )
+        for p in ev.photos:
+            uri = _photo_data_uri(p.file_path)
+            if uri is None:
+                continue
+            ai = p.ai_proposal
+            description = (
+                (ai.reasoning if ai else None)
+                or ev.combined_reasoning
+                or "Site photo supplied by the owner for this elevation."
+            )
+            rows.append({
+                "plot_label": f"{side} elevation",
+                "veg_class": sector.effective_classification or (ai.vegetation_class if ai else "—"),
+                "ai_class": ai.vegetation_class if ai else None,
+                "confidence": _conf_band(ai.confidence) if ai else "—",
+                "description": description,
+                "slope_text": slope_text,
+                "captured": _fmt_day(p.captured_at),
+                "photo": uri,
+            })
+    return rows
+
+
+def _side_context(side: str, sector: AssessorSector, gov: dict | None) -> dict:
+    """Project one _build_sector result into the report template's per-side
+    shape — including the honesty signals the template renders verbatim."""
+    veg_src = sector.value_sources.vegetation
+    veg_class = sector.effective_classification or "—"
+    # "Uncertain → forced to Forest" is the conservative fallback: the worst-case
+    # Forest class came from the public-data draft (no photo, no override) because
+    # automated confidence was low. The verbatim honesty line keys off this.
+    uncertain = veg_class == "Forest" and veg_src == "gis_draft"
+    flags = sector.review_flags or []
+
+    if veg_src == "photo":
+        confidence = _conf_band(sector.combined_confidence)
+    elif uncertain:
+        confidence = "low (worst-case applied)"
+    else:
+        confidence = "—"
+
+    has_distance = sector.distance_m is not None
+    has_slope = sector.effective_slope_degrees is not None
+    slope_band = f"{sector.effective_slope_degrees}°" if has_slope else "—"
+
+    return {
+        "compass_side": side,
+        "label": (gov or {}).get("direction") or "—",
+        "vegetation_class": veg_class,
+        "uncertain_vegetation": uncertain,
+        "flagged": bool(flags),
+        "flag_reason": "" if uncertain else _flag_reason(flags),
+        "classification_basis": _VEG_BASIS.get(veg_src, "—"),
+        "confidence": confidence,
+        "distance_m": sector.distance_m if has_distance else "—",
+        "has_distance": has_distance,
+        "distance_source": "Assessor override" if sector.value_sources.distance == "override" else "GIS measured",
+        "slope_band": slope_band,
+        "has_slope": has_slope,
+        "slope_direction": sector.slope_direction or "",
+        "slope_source": "Assessor override" if sector.value_sources.slope == "override" else "LiDAR DEM",
+        "bal": sector.final_bal or "BAL-LOW",
+        "excluded": veg_class == "Excluded",
+        "exclusion_clause": "",
+        "exclusion_reason": "",
+    }
+
+
+def build_report_context(
+    case: Case,
+    assessor: User,
+    profile: AssessorProfile | None = None,
+    map_image: str | None = None,
+) -> dict:
+    """Project a Case (+ the viewing assessor, optional accreditation profile and
+    pre-rendered aerial site map) into the report template context. Pure: reads
+    the same _build_sector projection the workspace and the signed certificate
+    use, so the preview agrees with both by construction."""
+    side_gov = _side_governing_transects(case.boundary_assessment)
+    ev_by_side = {ev.compass_side: ev for ev in (case.sector_evidence or [])}
+    sectors = {
+        side: _build_sector(side, ev_by_side.get(side), side_gov.get(side))
+        for side in COMPASS_SIDES
+    }
+    transects = [_side_context(side, sectors[side], side_gov.get(side)) for side in COMPASS_SIDES]
+    photo_evidence = _photo_evidence(ev_by_side, sectors)
+
+    certified = case.status == CaseStatus.COMPLETE
+    uncertain_sides = [t for t in transects if t["uncertain_vegetation"]]
+    gov_side = governing_compass_side(case)
+    gov_t = next((t for t in transects if t["compass_side"] == gov_side), None)
+    fdi = (case.boundary_assessment or {}).get("fire_danger_index")
+    # Per-lot / per-side BAL summary (Table 4 in a standard report). Each boundary
+    # side is one "asset row"; the construction sections follow AS 3959 by BAL band.
+    bal_summary = [
+        {"lot": t["compass_side"], "bal": t["bal"], "sections": _BAL_SECTIONS.get(t["bal"], "—")}
+        for t in transects
+    ]
+
+    # value_sources — the governing input provenance the assessor audits.
+    value_sources: list[dict] = []
+    if gov_t:
+        value_sources = [
+            {"field": "Vegetation", "value": gov_t["vegetation_class"],
+             "source": gov_t["classification_basis"], "confidence": gov_t["confidence"]},
+            {"field": "Separation", "value": (f"{gov_t['distance_m']} m" if gov_t["has_distance"] else "—"),
+             "source": gov_t["distance_source"], "confidence": "—"},
+            {"field": "Effective slope",
+             "value": (f"{gov_t['slope_band']} {gov_t['slope_direction']}".strip() if gov_t["has_slope"] else "—"),
+             "source": gov_t["slope_source"], "confidence": "—"},
+            {"field": "Fire Danger Index", "value": (f"FDI {fdi}" if fdi is not None else "—"),
+             "source": "fdi_nsw.json (129 LGAs)", "confidence": "—"},
+        ]
+
+    so = case.signoff
+    jurisdiction = assessor.jurisdiction or _derive_state(case) or "NSW"
+    acc_no = (so.accreditation_number if so else None) or (profile.accreditation_number if profile else None)
+    acc_level = (so.accreditation_level if so else None) or (profile.accreditation_level if profile else None)
+    company = profile.business_name if profile else None
+    return {
+        "report": {
+            "job_number": _job_number(case.id),
+            "version": "1",
+            "assessment_date": _fmt_day(case.created_at),
+            "generated_date": _fmt_day(datetime.now(timezone.utc)),
+            "status_label": STATUS_LABELS.get(case.status.value, case.status.value),
+            "report_number": so.report_number if so else "",
+            "signed_date": _fmt_day(so.signed_at) if so else "—",
+        },
+        "property": {
+            "full_address": case.property.matched_address or case.property.address,
+            "lga": case.property.lga or "—",
+            "state": _derive_state(case) or "NSW",
+        },
+        "site": {
+            "lga": case.property.lga or "—",
+            "fdi": fdi if fdi is not None else "—",
+            "fdi_source": "NSW LGA-to-FDI reference",
+            "boundary_mode": "Drawn boundary" if case.boundary_assessment else "Point",
+            "transect_count": len(transects),
+            "map_image": map_image,
+            "has_map": bool(map_image),
+            "is_40": "✓" if fdi == 40 else "",
+            "is_50": "✓" if fdi == 50 else "",
+            "is_80": "✓" if fdi == 80 else "",
+            "is_100": "✓" if fdi == 100 else "",
+        },
+        "result": {
+            "headline_bal": case.bal_rating or "BAL-LOW",
+            "certified": certified,
+            "preliminary": not certified,
+            "uncertain_vegetation": bool(uncertain_sides),
+            "uncertain_count": len(uncertain_sides),
+            "transect_count": len(transects),
+            "governing_side": gov_side or "—",
+            "governing_transect_label": (gov_t or {}).get("label", "—"),
+            "governing_vegetation": (gov_t or {}).get("vegetation_class", "—"),
+            "governing_slope": (
+                f"{gov_t['slope_band']} {gov_t['slope_direction']}".strip() if gov_t and gov_t["has_slope"] else "—"
+            ),
+            "governing_distance_m": (gov_t["distance_m"] if gov_t and gov_t["has_distance"] else "—"),
+            "value_sources": value_sources,
+        },
+        "transects": transects,
+        "photo_evidence": photo_evidence,
+        "has_photos": bool(photo_evidence),
+        "bal_summary": bal_summary,
+        "assessor": {
+            "name": assessor.name or assessor.email,
+            "jurisdiction": jurisdiction,
+            "jurisdiction_label": f"{jurisdiction} accredited assessor",
+            "accreditation_number": acc_no or "—",
+            "accreditation_level": acc_level or "",
+            "company": company or "EmberCheck",
+        },
+    }
+
+
+@router.get("/cases/{case_id}/report/preview", response_class=HTMLResponse)
+async def console_report_preview(
+    case_id: str,
+    assessor: User = Depends(current_assessor),
+) -> HTMLResponse:
+    """Render the LIVE report preview for a case as filled HTML. Read-only; same
+    scope as the case read (out-of-scope / unknown / unsubmitted → 404). The HTML
+    is produced by app.services.report_render from the report template — the SAME
+    renderer the eventual signed PDF will use, so preview and document can't drift.
+    Reflects any current assessor overrides because it reads the live case."""
+    case = await _get_in_scope_case_or_404(case_id, assessor)
+    profile = await AssessorProfile.find_one(AssessorProfile.user_id == assessor.id)
+    html = await _render_report_html_for(case, assessor, profile)
+    return HTMLResponse(html)
+
+
+class ReportTemplateRequest(BaseModel):
+    """Choose which report template a case renders with."""
+
+    template_id: str
+
+
+@router.patch("/cases/{case_id}/report-template")
+async def console_set_report_template(
+    case_id: str,
+    body: ReportTemplateRequest = Body(...),
+    assessor: User = Depends(current_assessor),
+) -> dict:
+    """Set the report template for a case (drives the preview, the download and the
+    issued PDF). `template_id` must be a known template — anything else is a 400.
+    Out-of-scope / unknown case → 404 (existence never revealed); a signed case is
+    locked → 409. The saved id is applied on the next preview/render."""
+    if body.template_id not in ALLOWED_TEMPLATE_IDS:
+        raise _bad_request(
+            f"template_id must be one of {', '.join(sorted(ALLOWED_TEMPLATE_IDS))}."
+        )
+    case = await _get_in_scope_case_or_404(case_id, assessor)
+    _reject_if_signed(case)
+    case.report_template_id = body.template_id
+    case.updated_at = datetime.now(timezone.utc)
+    await case.save()
+    return {"id": str(case.id), "report_template_id": case.report_template_id}
+
+
+def _report_template_id(case: Case) -> str:
+    """The template a case renders with: the id PINNED at signing for a signed
+    case (byte-stable re-renders), else the case's currently-chosen template."""
+    if case.signoff and case.signoff.template_id:
+        return case.signoff.template_id
+    return getattr(case, "report_template_id", None) or "nsw_certifier"
+
+
+async def _render_report_html_for(case: Case, assessor: User, profile: AssessorProfile | None) -> str:
+    """Build the report HTML for a case — the single source used by the preview,
+    the on-demand PDF download and the signed certificate. Uses the case's chosen
+    (or signed-pinned) template. Renders the Figure 1 aerial map off the event loop
+    (a failure falls back to the placeholder)."""
+    geometry = (case.boundary_assessment or {}).get("geometry")
+    map_image = await anyio.to_thread.run_sync(render_site_map, geometry)
+    context = build_report_context(case, assessor, profile, map_image)
+    return render_report_html(context, _report_template_id(case))
+
+
+async def _render_report_pdf_for(case: Case, assessor: User, profile: AssessorProfile | None) -> bytes:
+    """The report as PDF bytes — the SAME HTML the preview shows, printed to PDF by
+    headless Chromium (off the event loop). Preview, assessor download, signed
+    certificate and the end-user's copy are therefore byte-for-byte one document."""
+    html = await _render_report_html_for(case, assessor, profile)
+    return await anyio.to_thread.run_sync(render_report_pdf_from_html, html)
 
 
 @router.get("/cases/{case_id}/sectors/{compass_side}/photos/{photo_id}")
@@ -1472,34 +1826,12 @@ async def console_sign_case(
     now = datetime.now(timezone.utc)
     report_number = f"EC-{str(case.id)[-8:]}-{now.strftime('%Y%m%d')}-01"
     rows = _determination_rows(case)
-
-    # Render + persist the PDF on disk under PHOTO_STORAGE_DIR/<case>/report/.
-    locality = " · ".join(
-        p for p in (
-            f"{case.property.lga} LGA" if case.property.lga else None,
-            _derive_state(case) or "NSW",
-        ) if p
-    )
-    pdf_bytes = render_report_pdf(ReportContext(
-        report_number=report_number,
-        signed_at=now,
-        address=case.property.matched_address or case.property.address,
-        locality=locality,
-        assessor_name=name,
-        accreditation_number=accreditation_number or "",
-        accreditation_level=accreditation_level or "",
-        jurisdiction=jurisdiction,
-        overall_bal=case.bal_rating or "—",
-        governing_side=case.governing_direction or "",
-        rows=rows,
-    ))
     rel_path = f"{case.id}/report/{report_number}.pdf"
-    base = Path(media_settings.PHOTO_STORAGE_DIR).resolve()
-    full = (base / rel_path).resolve()
-    full.parent.mkdir(parents=True, exist_ok=True)
-    full.write_bytes(pdf_bytes)
 
-    # Freeze the signoff record + flip the case to COMPLETE.
+    # Freeze the signoff record + flip the case to COMPLETE *first*, so the report
+    # is rendered in its CERTIFIED state (badge cleared, certification block filled,
+    # report number stamped) — the frozen PDF then matches what everyone downloads.
+    previous = case.status
     case.signoff = Signoff(
         report_number=report_number,
         signed_by_assessor_id=assessor.id,
@@ -1513,12 +1845,23 @@ async def console_sign_case(
         determination=[r.__dict__ for r in rows],
         attestation=ATTESTATION_TEXT,
         report_path=rel_path,
+        # Pin the chosen template so re-rendering this signed case is byte-stable.
+        template_id=resolve_template_id(getattr(case, "report_template_id", None)),
     )
-    previous = case.status
     case.status = CaseStatus.COMPLETE
     case.review_reason = None
     case.photo_request_sides = []
     case.updated_at = now
+
+    # Render the ISSUED PDF from the SAME report template the preview uses (headless
+    # Chromium), and persist it under PHOTO_STORAGE_DIR/<case>/report/. This is the
+    # one document the assessor and the end-user both download — no drift.
+    pdf_bytes = await _render_report_pdf_for(case, assessor, profile)
+    base = Path(media_settings.PHOTO_STORAGE_DIR).resolve()
+    full = (base / rel_path).resolve()
+    full.parent.mkdir(parents=True, exist_ok=True)
+    full.write_bytes(pdf_bytes)
+
     await case.save()
 
     await CaseAuditEvent(
@@ -1543,10 +1886,22 @@ async def console_get_report(
     case_id: str,
     assessor: User = Depends(current_assessor),
 ):
-    """Stream the signed PDF certificate for the assessor. Same scope as the case
-    read; an unsigned/out-of-scope case → 404. Path-traversal-guarded."""
+    """Download the report PDF for the assessor. A SIGNED case streams its frozen
+    certificate; an unsigned case renders the CURRENT report (matching the live
+    preview, PRELIMINARY) on demand — so the assessor can download exactly what
+    they see at any point. Same scope as the case read; out-of-scope → 404."""
     case = await _get_in_scope_case_or_404(case_id, assessor)
-    return _stream_report_or_404(case)
+    if case.signoff and case.signoff.report_path:
+        return _stream_report_or_404(case)
+    profile = await AssessorProfile.find_one(AssessorProfile.user_id == assessor.id)
+    pdf_bytes = await _render_report_pdf_for(case, assessor, profile)
+    return Response(
+        pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_job_number(case.id)}-report-preliminary.pdf"'
+        },
+    )
 
 
 def _stream_report_or_404(case: Case) -> FileResponse:
