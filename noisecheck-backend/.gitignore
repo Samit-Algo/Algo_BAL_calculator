@@ -1,0 +1,14 @@
+.venv
+__pycache__/
+*.pyc
+.env
+
+# Bulk source download for the ANEF build (~4.8 MB of raw KML). Only needed to
+# rebuild the dataset; the built result in app/data/ is committed because the
+# API reads it at runtime and it is small.
+scripts/defence_anef_source.kml
+
+# Runtime output
+*.log
+logs/
+.pytest_cache/

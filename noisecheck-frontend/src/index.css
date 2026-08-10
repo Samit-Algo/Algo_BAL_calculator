@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+.spin {
+  width: 16px;
+  height: 16px;
+  border: 2px solid #cfd8e6;
+  border-top-color: #1f6feb;
+  border-radius: 50%;
+  animation: sp 0.8s linear infinite;
+}
+@keyframes sp {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* MapLibre's default control styling is a little large next to the result cards. */
+.maplibregl-ctrl-group button {
+  width: 28px;
+  height: 28px;
+}

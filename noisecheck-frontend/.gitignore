@@ -1,0 +1,9 @@
+node_modules
+dist
+.env
+*.local
+
+# Cloudflare Wrangler local state
+.wrangler/
+
+*.log

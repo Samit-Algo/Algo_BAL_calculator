@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# Download cache for the precompute scripts (~262 MB). These are raw council
+# feature dumps fetched from ArcGIS, kept only so a re-run does not re-download
+# them. Deleting the folder just makes the next run slower, never wrong.
+scripts/.cache/
+
+# Runtime output
+*.log
+logs/
+.pytest_cache/

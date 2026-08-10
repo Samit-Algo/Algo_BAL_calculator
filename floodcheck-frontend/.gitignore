@@ -1,0 +1,18 @@
+node_modules/
+dist/
+*.local
+.env
+
+# Precomputed council flood datasets (~222 MB; Gold Coast alone is 210 MB).
+# Built by floodcheck-backend/scripts/precompute_council.py and archived
+# separately rather than versioned: git cannot delta-compress GeoJSON, so every
+# regeneration would add the full size to history again, permanently.
+#
+# The app needs these at runtime - restore the folder before building or
+# deploying.
+public/councils/
+
+# Cloudflare Wrangler local state
+.wrangler/
+
+*.log
