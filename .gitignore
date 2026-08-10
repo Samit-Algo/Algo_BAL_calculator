@@ -1,0 +1,24 @@
+# Repository-wide ignores. Each project also has its own .gitignore for the
+# things specific to it; this file only covers what sits at the workspace root.
+
+# --- Deliberately not versioned -----------------------------------------------
+
+# BAL precompute experiment. Holds ~10.6 GB of downloaded and generated data -
+# the national G-NAF archive, its extracted address database, the NSW
+# OpenStreetMap extract, and per-council BAL output. A stray `git add -A` would
+# try to commit all of it and the push would be rejected.
+#
+# To version the code inside it later, either narrow this rule or force-add the
+# specific files: git add -f embercheck-bal-precompute-demo/scripts
+embercheck-bal-precompute-demo/
+
+# Working notes, not part of any application.
+docs/
+
+# --- Editor and OS noise ------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+*.swp
+*~
